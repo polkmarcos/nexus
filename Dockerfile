@@ -13,10 +13,13 @@ RUN apt-get update && apt-get install -y \
 COPY package*.json ./
 COPY server/package*.json ./server/
 
-# Install dependencies, ignoring the postinstall script initially
-RUN npm install --ignore-scripts
+# Remove postinstall script from root package.json to prevent recursive installs
+RUN npm pkg delete scripts.postinstall
 
-# Install server dependencies (this compiles better-sqlite3 with the installed build tools)
+# Install dependencies for root (this runs lifecycle scripts for Vite/Rolldown native bindings)
+RUN npm install
+
+# Install server dependencies (this compiles better-sqlite3)
 RUN npm --prefix server install
 
 # Copy the rest of the application code
