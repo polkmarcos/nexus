@@ -1,0 +1,31 @@
+{
+  "name": "crm-vendedores-server",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.6",
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "playwright": "^1.60.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  },
+  "nodemonConfig": {
+    "watch": ["index.js", "db.js", "scraper.js", "whatsapp.js"],
+    "ignore": [
+      "whatsapp-sessions/**",
+      "whatsapp-sessions/*",
+      "whatsapp-sessions",
+      "*.db",
+      "*.db-wal",
+      "*.db-shm",
+      "node_modules/**"
+    ]
+  }
+}

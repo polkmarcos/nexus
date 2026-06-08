@@ -1,0 +1,1721 @@
+import express from "express";
+import cors from "cors";
+import { randomUUID } from "crypto";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
+import db from "./db.js";
+import { scrapeGoogleMaps } from "./scraper.js";
+import { 
+  conectarWhatsapp, 
+  dispararMensagens, 
+  checkSessionStatus, 
+  sessions
+} from "./whatsapp.js";
+
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Force nodemon reload: 2026-06-06T13:36:00
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+app.use(cors());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.static(path.join(__dirname, "../dist")));
+
+app.use((req, res, next) => {
+  console.log(`[HTTP] ${req.method} ${req.url}`);
+  next();
+});
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function validarCPF(cpf) {
+  if (typeof cpf !== "string") return false;
+  cpf = cpf.replace(/[^\d]/g, "");
+  if (cpf.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(cpf)) return false;
+  
+  let soma = 0;
+  let resto;
+  
+  for (let i = 1; i <= 9; i++) {
+    soma += parseInt(cpf.substring(i - 1, i)) * (11 - i);
+  }
+  resto = (soma * 10) % 11;
+  if (resto === 10 || resto === 11) resto = 0;
+  if (resto !== parseInt(cpf.substring(9, 10))) return false;
+  
+  soma = 0;
+  for (let i = 1; i <= 10; i++) {
+    soma += parseInt(cpf.substring(i - 1, i)) * (12 - i);
+  }
+  resto = (soma * 10) % 11;
+  if (resto === 10 || resto === 11) resto = 0;
+  if (resto !== parseInt(cpf.substring(10, 11))) return false;
+  
+  return true;
+}
+
+// Scraper state tracker
+const activeCaptures = [];
+const CIDADES_VARREDURA = [
+  // São Paulo (SP)
+  "Poá - SP",
+  "Suzano - SP",
+  "Mogi das Cruzes - SP",
+  "Itaquaquecetuba - SP",
+  "Itaim Paulista - SP",
+  "Guarulhos - SP",
+  "São Bernardo do Campo - SP",
+  "Santo André - SP",
+  "Osasco - SP",
+  "São José dos Campos - SP",
+  "São Paulo - SP",
+  "Campinas - SP",
+  "Santos - SP",
+  "Sorocaba - SP",
+  "Ribeirão Preto - SP",
+  "Bauru - SP",
+  "Jundiaí - SP",
+  "Piracicaba - SP",
+  "Carapicuíba - SP",
+  "São Vicente - SP",
+  "Barueri - SP",
+  "Diadema - SP",
+  "Mauá - SP",
+  "Cotia - SP",
+  
+  // Rio de Janeiro (RJ)
+  "Rio de Janeiro - RJ",
+  "São Gonçalo - RJ",
+  "Duque de Caxias - RJ",
+  "Nova Iguaçu - RJ",
+  "Niterói - RJ",
+  "Belford Roxo - RJ",
+  "São João de Meriti - RJ",
+  "Petrópolis - RJ",
+  "Volta Redonda - RJ",
+  "Macaé - RJ",
+  "Cabo Frio - RJ",
+  "Nova Friburgo - RJ",
+  "Barra Mansa - RJ",
+  "Angra dos Reis - RJ",
+  "Teresópolis - RJ",
+  "Mesquita - RJ",
+  "Nilópolis - RJ",
+  "Maricá - RJ",
+  "Itaboraí - RJ",
+  "Resende - RJ",
+
+  // Minas Gerais (MG)
+  "Belo Horizonte - MG",
+  "Uberlândia - MG",
+  "Contagem - MG",
+  "Juiz de Fora - MG",
+  "Betim - MG",
+  "Montes Claros - MG",
+  "Ribeirão das Neves - MG",
+  "Uberaba - MG",
+  "Governador Valadares - MG",
+  "Ipatinga - MG",
+  
+  // Espírito Santo (ES)
+  "Serra - ES",
+  "Vila Velha - ES",
+  "Cariacica - ES",
+  "Vitória - ES",
+
+  // Paraná (PR)
+  "Curitiba - PR",
+  "Londrina - PR",
+  "Maringá - PR",
+  "Ponta Grossa - PR",
+  "Cascavel - PR",
+  "São José dos Pinhais - PR",
+  "Foz do Iguaçu - PR",
+
+  // Santa Catarina (SC)
+  "Joinville - SC",
+  "Florianópolis - SC",
+  "Blumenau - SC",
+  "São José - SC",
+  "Chapecó - SC",
+  "Criciúma - SC",
+  "Itajaí - SC",
+
+  // Rio Grande do Sul (RS)
+  "Porto Alegre - RS",
+  "Caxias do Sul - RS",
+  "Canoas - RS",
+  "Pelotas - RS",
+  "Santa Maria - RS",
+  "Gravataí - RS",
+  "Viamão - RS",
+  "Novo Hamburgo - RS",
+
+  // Bahia (BA)
+  "Salvador - BA",
+  "Feira de Santana - BA",
+  "Vitória da Conquista - BA",
+  "Camaçari - BA",
+  "Juazeiro - BA",
+  "Itabuna - BA",
+
+  // Pernambuco (PE)
+  "Recife - PE",
+  "Jaboatão dos Guararapes - PE",
+  "Olinda - PE",
+  "Caruaru - PE",
+  "Petrolina - PE",
+  "Paulista - PE",
+
+  // Ceará (CE)
+  "Fortaleza - CE",
+  "Caucaia - CE",
+  "Juazeiro do Norte - CE",
+  "Maracanaú - CE",
+  "Sobral - CE",
+
+  // Distrito Federal (DF)
+  "Brasília - DF",
+
+  // Goiás (GO)
+  "Goiânia - GO",
+  "Aparecida de Goiânia - GO",
+  "Anápolis - GO",
+  "Rio Verde - GO",
+
+  // Maranhão (MA)
+  "São Luís - MA",
+  "Imperatriz - MA",
+
+  // Paraíba (PB)
+  "João Pessoa - PB",
+  "Campina Grande - PB",
+
+  // Rio Grande do Norte (RN)
+  "Natal - RN",
+  "Mossoró - RN",
+
+  // Alagoas (AL)
+  "Maceió - AL",
+  "Arapiraca - AL",
+
+  // Sergipe (SE)
+  "Aracaju - SE",
+  "Nossa Senhora do Socorro - SE",
+
+  // Piauí (PI)
+  "Teresina - PI",
+  "Parnaíba - PI",
+
+  // Pará (PA)
+  "Belém - PA",
+  "Ananindeua - PA",
+  "Santarém - PA",
+  "Marabá - PA",
+
+  // Amazonas (AM)
+  "Manaus - AM",
+
+  // Mato Grosso (MT)
+  "Cuiabá - MT",
+  "Várzea Grande - MT",
+  "Rondonópolis - MT",
+
+  // Mato Grosso do Sul (MS)
+  "Campo Grande - MS",
+  "Dourados - MS",
+
+  // Tocantins (TO)
+  "Palmas - TO",
+
+  // Rondônia (RO)
+  "Porto Velho - RO",
+
+  // Acre (AC)
+  "Rio Branco - AC",
+
+  // Amapá (AP)
+  "Macapá - AP",
+
+  // Roraima (RR)
+  "Boa Vista - RR"
+];
+
+/**
+ * Gets the current limit of active sellers from the configurations table.
+ */
+function getLimiteVendedoresAtivos() {
+  try {
+    const row = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'limite_vendedores_ativos'").get();
+    return row ? Number(row.valor) : 100;
+  } catch (_) {
+    return 100;
+  }
+}
+
+/**
+ * Automatically maintains the active sellers queue.
+ * - Demotes active sellers with >48h inactivity.
+ * - Demotes active sellers with disconnected WhatsApp (after a 2-hour grace period).
+ * - Promotes the next inactive sellers in line to maintain up to current configuration limit.
+ */
+function processarFilaVendedores() {
+  try {
+    const now = nowIso();
+
+    const limitInactivity = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    
+    // 1. Get inactive sellers (no access for 48 hours)
+    const inativos = db.prepare(`
+      SELECT * FROM vendedores 
+      WHERE ativo = 1 AND (ultimo_acesso < ? OR ultimo_acesso IS NULL)
+    `).all(limitInactivity);
+    
+    // 2. Get active sellers to check WhatsApp connection
+    const activeSellersInDb = db.prepare("SELECT * FROM vendedores WHERE ativo = 1").all();
+    const graceTime = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(); // 2 hours grace time to connect
+    
+    db.transaction(() => {
+      // Demote inactive sellers
+      for (const v of inativos) {
+        console.log(`[Fila] Desativando vendedor "${v.nome}" (${v.id}) por inatividade de 48 horas.`);
+        db.prepare(`
+          UPDATE vendedores 
+          SET ativo = 0, fila_timestamp = ?
+          WHERE id = ?
+        `).run(now, v.id);
+      }
+      
+      // Demote active sellers with disconnected WhatsApp after grace time
+      for (const v of activeSellersInDb) {
+        if (inativos.some(i => i.id === v.id)) continue;
+        
+        const session = sessions.get(v.id);
+        const isDisconnected = !session || session.status === "disconnected";
+        
+        const lastAccessTime = v.ultimo_acesso || v.criado_em;
+        if (isDisconnected && lastAccessTime < graceTime) {
+          console.log(`[Fila] Desativando vendedor "${v.nome}" (${v.id}) por falta de conexão do WhatsApp.`);
+          db.prepare(`
+            UPDATE vendedores 
+            SET ativo = 0, fila_timestamp = ?
+            WHERE id = ?
+          `).run(now, v.id);
+        }
+      }
+      
+      // 3. Promote next in line if we have vacant spots based on current dynamic config
+      const maxActive = getLimiteVendedoresAtivos();
+      const countAtivos = db.prepare("SELECT COUNT(*) as count FROM vendedores WHERE ativo = 1").get().count;
+      const spotsAvailable = Math.max(0, maxActive - countAtivos);
+      
+      if (spotsAvailable > 0) {
+        const proximos = db.prepare(`
+          SELECT * FROM vendedores 
+          WHERE ativo = 0 
+          ORDER BY COALESCE(fila_timestamp, criado_em) ASC 
+          LIMIT ?
+        `).all(spotsAvailable);
+        
+        for (const v of proximos) {
+          console.log(`[Fila] Promovendo vendedor "${v.nome}" (${v.id}) da fila para ativo.`);
+          db.prepare(`
+            UPDATE vendedores 
+            SET ativo = 1, fila_timestamp = ?, ultimo_acesso = ?
+            WHERE id = ?
+          `).run(now, now, v.id);
+        }
+      }
+    })();
+  } catch (error) {
+    console.error("Erro no processamento da fila de vendedores:", error.message);
+  }
+}
+
+function recircularLeads() {
+  try {
+    const now = nowIso();
+    const limitTimeLeads = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const result = db.prepare(`
+      UPDATE leads
+      SET status = 'disponivel', vendedor_id = NULL, assigned_to = NULL, assigned_at = NULL, atualizado_em = ?
+      WHERE status = 'reservado' AND assigned_at < ?
+    `).run(now, limitTimeLeads);
+    if (result.changes > 0) {
+      console.log(`[Recirculação] ${result.changes} leads devolvidos ao lago como 'disponivel' por inatividade (> 24h).`);
+    }
+  } catch (error) {
+    console.error("Erro na recirculação de leads:", error.message);
+  }
+}
+
+// Process queue on server startup and schedule every 5 minutes
+processarFilaVendedores();
+setInterval(processarFilaVendedores, 5 * 60 * 1000);
+
+// Recirculate leads on startup and schedule every hour
+recircularLeads();
+setInterval(recircularLeads, 60 * 60 * 1000);
+
+app.get("/", (req, res) => {
+  res.json({
+    ok: true,
+    message: "CRM Vendedores Server online",
+  });
+});
+
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    status: "online",
+  });
+});
+
+// VENDEDORES
+app.post("/vendedores", (req, res) => {
+  try {
+    const {
+      nome,
+      email,
+      senha,
+      whatsapp = "",
+      limite_diario = 25,
+      cpf = "",
+      link_kiwify = "",
+      indicado_por_id = null,
+    } = req.body;
+
+    if (!nome || !email || !senha || !cpf) {
+      return res.status(400).json({
+        ok: false,
+        error: "Nome, e-mail, senha e CPF são obrigatórios.",
+      });
+    }
+
+    if (senha.length < 6) {
+      return res.status(400).json({
+        ok: false,
+        error: "A senha de acesso deve ter no mínimo 6 caracteres.",
+      });
+    }
+
+    if (!validarCPF(cpf)) {
+      return res.status(400).json({
+        ok: false,
+        error: "O CPF informado é inválido.",
+      });
+    }
+
+    // Check if email already exists
+    const existing = db.prepare("SELECT id FROM vendedores WHERE email = ?").get(email);
+    if (existing) {
+      return res.status(400).json({
+        ok: false,
+        error: "Este e-mail de vendedor já está cadastrado.",
+      });
+    }
+
+    // Check if CPF already exists
+    const cleanCpf = cpf.replace(/[^\d]/g, "");
+    const existingCpf = db.prepare("SELECT id FROM vendedores WHERE REPLACE(REPLACE(cpf, '.', ''), '-', '') = ?").get(cleanCpf);
+    if (existingCpf) {
+      return res.status(400).json({
+        ok: false,
+        error: "Este CPF já está cadastrado.",
+      });
+    }
+
+    const now = nowIso();
+    
+    // Process queue first to check spot availability
+    processarFilaVendedores();
+    
+    const maxActive = getLimiteVendedoresAtivos();
+    const countAtivos = db.prepare("SELECT COUNT(*) as count FROM vendedores WHERE ativo = 1").get().count;
+    const ativo = countAtivos < maxActive ? 1 : 0;
+
+    const vendedor = {
+      id: randomUUID(),
+      nome,
+      email,
+      senha,
+      whatsapp,
+      limite_diario: Number(limite_diario) || 25,
+      ativo,
+      ultimo_acesso: now,
+      fila_timestamp: now,
+      cpf,
+      link_kiwify,
+      indicado_por_id: indicado_por_id || null,
+      eh_gerente: 0,
+      criado_em: now,
+    };
+
+    db.prepare(`
+      INSERT INTO vendedores (
+        id, nome, email, senha, whatsapp, limite_diario, ativo, ultimo_acesso, fila_timestamp, cpf, link_kiwify, indicado_por_id, eh_gerente, criado_em
+      ) VALUES (
+        @id, @nome, @email, @senha, @whatsapp, @limite_diario, @ativo, @ultimo_acesso, @fila_timestamp, @cpf, @link_kiwify, @indicado_por_id, @eh_gerente, @criado_em
+      )
+    `).run(vendedor);
+
+    // Calculate queue position if inactive
+    if (ativo === 0) {
+      const queuePos = db.prepare(`
+        SELECT COUNT(*) + 1 as posicao FROM vendedores 
+        WHERE ativo = 0 AND COALESCE(fila_timestamp, criado_em) < (
+          SELECT COALESCE(fila_timestamp, criado_em) FROM vendedores WHERE id = ?
+        )
+      `).get(vendedor.id).posicao;
+      vendedor.posicao_fila = queuePos;
+    }
+
+    res.json({
+      ok: true,
+      vendedor,
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message,
+    });
+  }
+});
+
+app.get("/vendedores", (req, res) => {
+  try {
+    const vendedores = db
+      .prepare("SELECT * FROM vendedores ORDER BY criado_em DESC")
+      .all();
+
+    res.json({
+      ok: true,
+      vendedores,
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/vendedores/fila/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const v = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
+    if (!v) {
+      return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
+    }
+    
+    let queuePos = 0;
+    if (v.ativo === 0) {
+      queuePos = db.prepare(`
+        SELECT COUNT(*) + 1 as posicao FROM vendedores 
+        WHERE ativo = 0 AND COALESCE(fila_timestamp, criado_em) < (
+          SELECT COALESCE(fila_timestamp, criado_em) FROM vendedores WHERE id = ?
+        )
+      `).get(id).posicao;
+    }
+    
+    // Update access
+    const now = nowIso();
+    db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, id);
+    
+    res.json({ ok: true, ativo: v.ativo, posicao_fila: queuePos });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.put("/vendedores/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nome, email, senha, whatsapp, limite_diario, ativo, cpf, link_kiwify, eh_gerente, indicado_por_id } = req.body;
+    
+    const vendedorExistente = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
+    if (!vendedorExistente) {
+      return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
+    }
+
+    const nomeFinal = nome !== undefined ? nome : vendedorExistente.nome;
+    const emailFinal = email !== undefined ? email : vendedorExistente.email;
+    const senhaFinal = senha !== undefined ? senha : vendedorExistente.senha;
+    const whatsappFinal = whatsapp !== undefined ? whatsapp : vendedorExistente.whatsapp;
+    const limiteFinal = limite_diario !== undefined ? Number(limite_diario) : vendedorExistente.limite_diario;
+    const ativoFinal = ativo !== undefined ? Number(ativo) : vendedorExistente.ativo;
+    const cpfFinal = cpf !== undefined ? cpf : vendedorExistente.cpf;
+    const linkKiwifyFinal = link_kiwify !== undefined ? link_kiwify : vendedorExistente.link_kiwify;
+    const ehGerenteFinal = eh_gerente !== undefined ? Number(eh_gerente) : (vendedorExistente.eh_gerente || 0);
+    const indicadoPorIdFinal = indicado_por_id !== undefined ? indicado_por_id : (vendedorExistente.indicado_por_id || null);
+    
+    if (senha !== undefined && senha.length < 6) {
+      return res.status(400).json({ ok: false, error: "A senha de acesso deve ter no mínimo 6 caracteres." });
+    }
+
+    if (cpf !== undefined && cpf !== vendedorExistente.cpf) {
+      if (!validarCPF(cpf)) {
+        return res.status(400).json({ ok: false, error: "O CPF informado é inválido." });
+      }
+      const cleanCpf = cpf.replace(/[^\d]/g, "");
+      const existingCpf = db.prepare("SELECT id FROM vendedores WHERE REPLACE(REPLACE(cpf, '.', ''), '-', '') = ? AND id != ?").get(cleanCpf, id);
+      if (existingCpf) {
+        return res.status(400).json({ ok: false, error: "Este CPF já está cadastrado em outro vendedor." });
+      }
+    }
+
+    const now = nowIso();
+    const filaTimestampFinal = (ativoFinal === 0 && vendedorExistente.ativo === 1) ? now : vendedorExistente.fila_timestamp;
+
+    db.prepare(`
+      UPDATE vendedores 
+      SET nome = ?, email = ?, senha = ?, whatsapp = ?, limite_diario = ?, ativo = ?, fila_timestamp = ?, cpf = ?, link_kiwify = ?, eh_gerente = ?, indicado_por_id = ?
+      WHERE id = ?
+    `).run(nomeFinal, emailFinal, senhaFinal, whatsappFinal, limiteFinal, ativoFinal, filaTimestampFinal, cpfFinal, linkKiwifyFinal, ehGerenteFinal, indicadoPorIdFinal, id);
+    
+    // Process queue after change
+    processarFilaVendedores();
+
+    res.json({ ok: true, message: "Vendedor updated com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/vendedores/:id/dashboard-stats", (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const vendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
+    if (!vendedor) {
+      return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartIso = todayStart.toISOString();
+
+    // 1. Leads assigned today (or currently active in 'reservado')
+    const leadsHoje = db.prepare(`
+      SELECT COUNT(*) as total FROM leads 
+      WHERE vendedor_id = ? AND (
+        status = 'reservado' 
+        OR (status != 'disponivel' AND status != 'Vácuo' AND atualizado_em >= ?)
+      )
+    `).get(id, todayStartIso).total;
+
+    // 2. Capacity remaining today
+    let limite = 25;
+    if (vendedor.suspensao_ate && new Date(vendedor.suspensao_ate) > new Date()) {
+      limite = 0;
+    } else if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
+      limite = 10;
+    } else {
+      limite = vendedor.limite_diario;
+    }
+    const capacidadeHoje = Math.max(0, limite - leadsHoje);
+
+    // 3. Leads counts by status
+    const statusCounts = db.prepare(`
+      SELECT status, COUNT(*) as count FROM leads 
+      WHERE vendedor_id = ?
+      GROUP BY status
+    `).all(id);
+
+    const counts = {
+      disponivel: 0,
+      reservado: 0,
+      "Mensagem enviada": 0,
+      "Pré-venda feita": 0,
+      Comprou: 0,
+      Recusado: 0
+    };
+
+    statusCounts.forEach(row => {
+      if (counts[row.status] !== undefined) {
+        counts[row.status] = row.count;
+      }
+    });
+
+    // Count total leads excluding hidden 'reservado' leads
+    const totalLeads = db.prepare("SELECT COUNT(*) as total FROM leads WHERE vendedor_id = ? AND status != 'reservado'").get(id).total;
+
+    // 4. Financial indicators
+    const configPreco = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'preco_produto'").get();
+    const configComissao = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'comissao_venda'").get();
+    
+    const precoProduto = configPreco ? Number(configPreco.valor) : 150.00;
+    const comissaoVenda = configComissao ? Number(configComissao.valor) : 50.00;
+
+    const vendasAprovadas = counts.Comprou || 0;
+    const faturamentoTotal = vendasAprovadas * precoProduto;
+    const comissaoAcumulada = vendasAprovadas * comissaoVenda;
+
+    // 5. Pre-sales pending approval
+    const preVendasPendentes = db.prepare(`
+      SELECT COUNT(*) as total FROM pre_vendas 
+      WHERE vendedor_id = ? AND status = 'Pendente'
+    `).get(id).total;
+
+    // 6. Recent sales (approved pre-sales)
+    const recentSales = db.prepare(`
+      SELECT p.*, l.empresa, l.telefone, l.nicho 
+      FROM pre_vendas p
+      JOIN leads l ON p.lead_id = l.id
+      WHERE p.vendedor_id = ? AND p.status = 'Aprovada'
+      ORDER BY p.atualizado_em DESC
+      LIMIT 5
+    `).all(id);
+
+    const leadsEnviados = db.prepare(`
+      SELECT COUNT(*) as total FROM leads 
+      WHERE vendedor_id = ? AND status NOT IN ('disponivel', 'reservado')
+    `).get(id).total;
+
+    const ehGerente = vendedor.eh_gerente || 0;
+
+    let indicadosCount = 0;
+    let indicadosSalesCount = 0;
+    let comissaoGerenteAcumulada = 0;
+    let indicadosList = [];
+
+    if (ehGerente === 1) {
+      indicadosCount = db.prepare("SELECT COUNT(*) as total FROM vendedores WHERE indicado_por_id = ?").get(id).total;
+      
+      indicadosSalesCount = db.prepare(`
+        SELECT COUNT(*) as total 
+        FROM pre_vendas p
+        JOIN vendedores v ON p.vendedor_id = v.id
+        WHERE v.indicado_por_id = ? AND p.status = 'Aprovada'
+      `).get(id).total;
+
+      comissaoGerenteAcumulada = indicadosSalesCount * 100;
+
+      indicadosList = db.prepare(`
+        SELECT 
+          v.id, 
+          v.nome, 
+          v.email, 
+          v.whatsapp, 
+          v.criado_em, 
+          (SELECT COUNT(*) FROM pre_vendas p WHERE p.vendedor_id = v.id AND p.status = 'Aprovada') as vendas_aprovadas
+        FROM vendedores v
+        WHERE v.indicado_por_id = ?
+        ORDER BY v.criado_em DESC
+      `).all(id);
+    }
+
+    res.json({
+      ok: true,
+      stats: {
+        limite_diario: limite,
+        leads_hoje: leadsHoje,
+        capacidade_hoje: capacidadeHoje,
+        total_leads: totalLeads,
+        leads_novos: counts.reservado,
+        leads_contatados: counts["Mensagem enviada"],
+        leads_pre_venda: counts["Pré-venda feita"],
+        vendas_fechadas: vendasAprovadas,
+        faturamento_total: faturamentoTotal,
+        comissao_acumulada: comissaoAcumulada,
+        comissao_venda: comissaoVenda,
+        preco_produto: precoProduto,
+        pre_vendas_pendentes: preVendasPendentes,
+        recent_sales: recentSales,
+        leads_enviados: leadsEnviados,
+        eh_gerente: ehGerente,
+        indicados_count: indicadosCount,
+        indicados_sales_count: indicadosSalesCount,
+        comissao_gerente_acumulada: comissaoGerenteAcumulada,
+        indicados_list: indicadosList
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/vendedores/:id/ativar-gerente", (req, res) => {
+  try {
+    const { id } = req.params;
+    const vendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
+    if (!vendedor) {
+      return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
+    }
+
+    if (vendedor.eh_gerente === 1) {
+      return res.status(400).json({ ok: false, error: "Modo gerente já está ativo." });
+    }
+
+    const leadsEnviados = db.prepare(`
+      SELECT COUNT(*) as total FROM leads 
+      WHERE vendedor_id = ? AND status NOT IN ('disponivel', 'reservado')
+    `).get(id).total;
+
+    const vendasAprovadas = db.prepare(`
+      SELECT COUNT(*) as total FROM pre_vendas 
+      WHERE vendedor_id = ? AND status = 'Aprovada'
+    `).get(id).total;
+
+    if (leadsEnviados >= 100 && vendasAprovadas >= 1) {
+      db.prepare("UPDATE vendedores SET eh_gerente = 1 WHERE id = ?").run(id);
+      res.json({ ok: true, message: "Parabéns! Modo gerente ativado com sucesso." });
+    } else {
+      res.status(400).json({
+        ok: false,
+        error: `Requisitos pendentes: você precisa de pelo menos 100 leads enviados (atual: ${leadsEnviados}) e 1 venda aprovada (atual: ${vendasAprovadas}).`
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/login", (req, res) => {
+  try {
+    const { email, senha } = req.body;
+
+    // Login checks regardless of 'ativo' because inactive sellers can log in and view queue info
+    const vendedor = db
+      .prepare("SELECT * FROM vendedores WHERE email = ? AND senha = ?")
+      .get(email, senha);
+
+    if (!vendedor) {
+      return res.status(401).json({
+        ok: false,
+        error: "E-mail ou senha incorretos.",
+      });
+    }
+
+    const now = nowIso();
+    
+    // Update access
+    db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, vendedor.id);
+    
+    // Refresh queue first
+    processarFilaVendedores();
+    
+    // Fetch refreshed seller state
+    const freshVendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(vendedor.id);
+    
+    // Calculate queue position if inactive
+    if (freshVendedor.ativo === 0) {
+      const queuePos = db.prepare(`
+        SELECT COUNT(*) + 1 as posicao FROM vendedores 
+        WHERE ativo = 0 AND COALESCE(fila_timestamp, criado_em) < (
+          SELECT COALESCE(fila_timestamp, criado_em) FROM vendedores WHERE id = ?
+        )
+      `).get(vendedor.id).posicao;
+      freshVendedor.posicao_fila = queuePos;
+    }
+
+    res.json({
+      ok: true,
+      vendedor: freshVendedor,
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// ADMIN CONFIGURATIONS & AUTHENTICATION
+app.post("/admin/login", (req, res) => {
+  try {
+    const { senha } = req.body;
+    if (!senha) {
+      return res.status(400).json({ ok: false, error: "Senha é obrigatória." });
+    }
+    
+    const adminSenha = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'senha_administrador'").get().valor;
+    if (senha === adminSenha) {
+      return res.json({ ok: true, token: "admin-authenticated-token" });
+    }
+    return res.status(401).json({ ok: false, error: "Senha do administrador incorreta." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/configuracoes", (req, res) => {
+  try {
+    const rows = db.prepare("SELECT * FROM configuracoes").all();
+    const config = {};
+    for (const r of rows) {
+      if (r.chave !== "senha_administrador") {
+        config[r.chave] = r.valor;
+      }
+    }
+    // Maintain direct field fallback just in case
+    if (config.limite_vendedores_ativos === undefined) {
+      config.limite_vendedores_ativos = getLimiteVendedoresAtivos();
+    }
+    res.json({ ok: true, ...config });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/admin/estoque-leads", (req, res) => {
+  try {
+    const row = db.prepare("SELECT COUNT(*) as count FROM leads WHERE status = 'disponivel'").get();
+    res.json({ ok: true, count: row ? row.count : 0 });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.put("/configuracoes", (req, res) => {
+  try {
+    const { limite_vendedores_ativos, senha_administrador, comissao_venda, preco_produto, link_afiliacao_kiwify } = req.body;
+    
+    db.transaction(() => {
+      if (limite_vendedores_ativos !== undefined) {
+        db.prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'limite_vendedores_ativos'")
+          .run(String(limite_vendedores_ativos));
+      }
+      
+      if (senha_administrador !== undefined && senha_administrador.trim() !== "") {
+        db.prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'senha_administrador'")
+          .run(senha_administrador.trim());
+      }
+
+      if (comissao_venda !== undefined) {
+        db.prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'comissao_venda'")
+          .run(String(comissao_venda));
+      }
+
+      if (preco_produto !== undefined) {
+        db.prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'preco_produto'")
+          .run(String(preco_produto));
+      }
+
+      if (link_afiliacao_kiwify !== undefined) {
+        db.prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'link_afiliacao_kiwify'")
+          .run(String(link_afiliacao_kiwify).trim());
+      }
+    })();
+    
+    // Process queue immediately in case limit increased/changed
+    processarFilaVendedores();
+    
+    res.json({ ok: true, message: "Configurações salvas com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// GOOGLE MAPS LEADS CAPTURE
+app.post("/capturar-leads", (req, res) => {
+  try {
+    const { query, nicho, limite = 15, nacional = false, bairros = "" } = req.body;
+    
+    if (!query || !nicho) {
+      return res.status(400).json({
+        ok: false,
+        error: "Query de busca e Nicho são obrigatórios."
+      });
+    }
+
+    // Limit maximum concurrent active captures to 2 to prevent VPS lockups
+    const runningCount = activeCaptures.filter(c => c.status === "rodando").length;
+    if (runningCount >= 2) {
+      return res.status(400).json({
+        ok: false,
+        error: "Já existem 2 capturas em andamento. Aguarde a conclusão de uma delas para evitar sobrecarga no servidor."
+      });
+    }
+
+    const listaBairros = bairros ? String(bairros).split(",").map(b => b.trim()).filter(b => b.length > 0) : [];
+
+    const captureId = randomUUID();
+    const newCapture = {
+      id: captureId,
+      query,
+      nicho,
+      nacional: !!nacional,
+      limite: Number(limite) || 15,
+      status: "rodando",
+      progresso: nacional 
+        ? "Iniciando varredura por cidades..." 
+        : (listaBairros.length > 0 
+           ? "Iniciando varredura por bairros..." 
+           : "Buscando no Google Maps..."),
+      leadsCount: 0,
+      criadoEm: nowIso()
+    };
+
+    activeCaptures.unshift(newCapture);
+    if (activeCaptures.length > 20) {
+      activeCaptures.pop(); // Cap history to prevent memory leak
+    }
+
+    // Background job
+    const runScraper = async () => {
+      try {
+        if (nacional) {
+          let cidadesLista = CIDADES_VARREDURA;
+          try {
+            const fileContent = fs.readFileSync(path.join(__dirname, "municipios.json"), "utf-8");
+            const parsed = JSON.parse(fileContent);
+            cidadesLista = parsed.map(c => `${c.nome} - ${c.uf}`);
+            console.log(`[Scraper Nacional] Carregadas ${cidadesLista.length} cidades de municipios.json.`);
+          } catch (err) {
+            console.error("[Scraper Nacional] Falha ao ler municipios.json, usando fallback do index.js:", err.message);
+          }
+
+          let totalLeadsCount = 0;
+          for (let i = 0; i < cidadesLista.length; i++) {
+            const cidade = cidadesLista[i];
+            
+            // Check if scraper was cancelled
+            const current = activeCaptures.find(c => c.id === captureId);
+            if (!current || current.status !== "rodando") {
+              break;
+            }
+
+            current.progresso = `Buscando em ${cidade} (${i + 1}/${cidadesLista.length})`;
+            const cityQuery = `${query} em ${cidade}`;
+            
+            try {
+              const isCancelled = () => {
+                const c = activeCaptures.find(x => x.id === captureId);
+                return !c || c.status !== "rodando";
+              };
+              const onLeadSaved = (lead) => {
+                const c = activeCaptures.find(x => x.id === captureId);
+                if (c) {
+                  totalLeadsCount++;
+                  c.leadsCount = totalLeadsCount;
+                }
+              };
+              await scrapeGoogleMaps(cityQuery, nicho, Number(limite), isCancelled, onLeadSaved);
+            } catch (err) {
+              console.error(`[Scraper Cidades] Erro em ${cidade}:`, err.message);
+              const isNetworkError = err.message.includes("net::ERR_INTERNET_DISCONNECTED") || 
+                                     err.message.includes("net::ERR_NETWORK_CHANGED") ||
+                                     err.message.includes("net::ERR_NAME_NOT_RESOLVED") ||
+                                     err.message.includes("net::ERR_CONNECTION_REFUSED") ||
+                                     err.message.includes("DNS_PROBE_FINISHED_NO_INTERNET");
+              if (isNetworkError) {
+                const currentObj = activeCaptures.find(c => c.id === captureId);
+                if (currentObj) {
+                  currentObj.status = "erro";
+                  currentObj.progresso = "Erro: Conexão com a internet perdida.";
+                }
+                break; // Abortar varredura nacional
+              }
+            }
+            
+            // Politeness delay
+            await new Promise(r => setTimeout(r, Math.floor(Math.random() * (12000 - 5000 + 1)) + 5000));
+          }
+          
+          const final = activeCaptures.find(c => c.id === captureId);
+          if (final && final.status === "rodando") {
+            final.status = "concluido";
+            final.progresso = "Concluído (Varredura de Cidades)";
+          }
+        } else if (listaBairros.length > 0) {
+          let totalLeadsCount = 0;
+          for (let i = 0; i < listaBairros.length; i++) {
+            const bairro = listaBairros[i];
+            
+            const current = activeCaptures.find(c => c.id === captureId);
+            if (!current || current.status !== "rodando") {
+              break;
+            }
+
+            current.progresso = `Buscando em ${bairro} (${i + 1}/${listaBairros.length})`;
+            const neighborhoodQuery = `${query} - ${bairro}`;
+            
+            try {
+              const isCancelled = () => {
+                const c = activeCaptures.find(x => x.id === captureId);
+                return !c || c.status !== "rodando";
+              };
+              const onLeadSaved = (lead) => {
+                const c = activeCaptures.find(x => x.id === captureId);
+                if (c) {
+                  totalLeadsCount++;
+                  c.leadsCount = totalLeadsCount;
+                }
+              };
+              await scrapeGoogleMaps(neighborhoodQuery, nicho, Number(limite), isCancelled, onLeadSaved);
+            } catch (err) {
+              console.error(`[Scraper Bairros] Erro em ${bairro}:`, err.message);
+              const isNetworkError = err.message.includes("net::ERR_INTERNET_DISCONNECTED") || 
+                                     err.message.includes("net::ERR_NETWORK_CHANGED") ||
+                                     err.message.includes("net::ERR_NAME_NOT_RESOLVED") ||
+                                     err.message.includes("net::ERR_CONNECTION_REFUSED") ||
+                                     err.message.includes("DNS_PROBE_FINISHED_NO_INTERNET");
+              if (isNetworkError) {
+                const currentObj = activeCaptures.find(c => c.id === captureId);
+                if (currentObj) {
+                  currentObj.status = "erro";
+                  currentObj.progresso = "Erro: Conexão com a internet perdida.";
+                }
+                break; // Abortar varredura de bairros
+              }
+            }
+            
+            await new Promise(r => setTimeout(r, 2000));
+          }
+          
+          const final = activeCaptures.find(c => c.id === captureId);
+          if (final && final.status === "rodando") {
+            final.status = "concluido";
+            final.progresso = "Concluído (Bairros)";
+          }
+        } else {
+          const isCancelled = () => {
+            const c = activeCaptures.find(x => x.id === captureId);
+            return !c || c.status !== "rodando";
+          };
+          const onLeadSaved = (lead) => {
+            const c = activeCaptures.find(x => x.id === captureId);
+            if (c) {
+              c.leadsCount++;
+            }
+          };
+          await scrapeGoogleMaps(query, nicho, Number(limite), isCancelled, onLeadSaved);
+          const final = activeCaptures.find(c => c.id === captureId);
+          if (final && final.status === "rodando") {
+            final.status = "concluido";
+            final.progresso = "Concluído";
+          }
+        }
+      } catch (err) {
+        console.error("[Scraper] Erro geral na captura em background:", err);
+        const final = activeCaptures.find(c => c.id === captureId);
+        if (final) {
+          final.status = "erro";
+          final.progresso = `Erro: ${err.message}`;
+        }
+      }
+    };
+
+    runScraper();
+
+    res.json({
+      ok: true,
+      message: nacional 
+        ? "Captura nacional por cidades iniciada em segundo plano!" 
+        : (listaBairros.length > 0 
+           ? "Captura fracionada por bairros iniciada em segundo plano!" 
+           : "Captura automática iniciada em segundo plano!"),
+      captureId
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/capturar-status", (req, res) => {
+  const activeScraper = activeCaptures.find(c => c.status === "rodando");
+  
+  // Obter os últimos 8 leads adicionados ao banco de dados para mostrar na janela flutuante em tempo real
+  const recentLeads = db.prepare(`
+    SELECT empresa, telefone, cidade, estado, criado_em 
+    FROM leads 
+    ORDER BY criado_em DESC 
+    LIMIT 8
+  `).all();
+
+  res.json({
+    ok: true,
+    active: !!activeScraper,
+    currentQuery: activeScraper ? activeScraper.query : null,
+    leadsCount: activeScraper ? activeScraper.leadsCount : 0,
+    capturas: activeCaptures,
+    recentLeads
+  });
+});
+
+app.post("/capturar-cancelar/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const capture = activeCaptures.find(c => c.id === id);
+    if (capture) {
+      if (capture.status === "rodando") {
+        capture.status = "cancelado";
+        capture.progresso = "Cancelado pelo usuário";
+      }
+      return res.json({ ok: true, message: "Captura cancelada com sucesso." });
+    }
+    res.status(404).json({ ok: false, error: "Captura não encontrada." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// LEADS
+app.get("/leads", (req, res) => {
+  try {
+    const leads = db.prepare(`
+      SELECT l.*, v.nome as vendedor_nome 
+      FROM leads l
+      LEFT JOIN vendedores v ON l.vendedor_id = v.id
+      ORDER BY l.criado_em DESC
+    `).all();
+    res.json({ ok: true, leads });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.delete("/leads/limpar", (req, res) => {
+  try {
+    db.transaction(() => {
+      db.prepare("DELETE FROM pre_vendas").run();
+      db.prepare("DELETE FROM leads").run();
+    })();
+    res.json({ ok: true, message: "Todos os leads e pré-vendas foram excluídos com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/leads/vendedor/:vendedorId", (req, res) => {
+  try {
+    const { vendedorId } = req.params;
+    
+    // Update seller access timestamp
+    const now = nowIso();
+    db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, vendedorId);
+    
+    const leads = db.prepare(`
+      SELECT * 
+      FROM leads 
+      WHERE vendedor_id = ?
+      ORDER BY criado_em DESC
+    `).all(vendedorId);
+    res.json({ ok: true, leads });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.put("/leads/:id/status", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, observacoes } = req.body;
+
+    if (!status) {
+      return res.status(400).json({ ok: false, error: "Status é obrigatório." });
+    }
+
+    const now = nowIso();
+    db.prepare(`
+      UPDATE leads 
+      SET status = ?, observacoes = COALESCE(?, observacoes), atualizado_em = ? 
+      WHERE id = ?
+    `).run(status, observacoes || "", now, id);
+
+    res.json({ ok: true, message: "Status do lead atualizado com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// LEAD AUTO-DISTRIBUTION
+app.post("/distribuir-leads", (req, res) => {
+  try {
+    const now = nowIso();
+    
+    // Process/verify queue
+    processarFilaVendedores();
+
+    // 1. Get active sellers
+    const vendedores = db.prepare("SELECT * FROM vendedores WHERE ativo = 1").all();
+    if (vendedores.length === 0) {
+      return res.status(400).json({ ok: false, error: "Não há vendedores ativos cadastrados." });
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartIso = todayStart.toISOString();
+
+    let totalDistribuido = 0;
+
+    // Run transaction
+    const transaction = db.transaction(() => {
+      for (const vendedor of vendedores) {
+        // Check how many leads were already assigned to him today
+        const count = db.prepare(`
+          SELECT COUNT(*) as total FROM leads 
+          WHERE vendedor_id = ? AND (
+            status = 'reservado' 
+            OR (status != 'disponivel' AND status != 'Vácuo' AND atualizado_em >= ?)
+          )
+        `).get(vendedor.id, todayStartIso).total;
+
+        let limite = 25;
+        if (vendedor.suspensao_ate && new Date(vendedor.suspensao_ate) > new Date()) {
+          limite = 0;
+        } else if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
+          limite = 10;
+        } else {
+          limite = vendedor.limite_diario;
+        }
+        const capacidade = Math.max(0, limite - count);
+        if (capacidade <= 0) continue;
+
+        // Fetch disponivel leads
+        const leads = db.prepare(`
+          SELECT id FROM leads 
+          WHERE status = 'disponivel' AND vendedor_id IS NULL 
+          ORDER BY criado_em ASC 
+          LIMIT ?
+        `).all(capacidade);
+
+        if (leads.length === 0) continue;
+
+        const updateStmt = db.prepare(`
+          UPDATE leads 
+          SET vendedor_id = ?, status = 'reservado', assigned_to = ?, assigned_at = ?, atualizado_em = ? 
+          WHERE id = ?
+        `);
+
+        for (const lead of leads) {
+          updateStmt.run(vendedor.id, vendedor.id, now, now, lead.id);
+          totalDistribuido++;
+        }
+      }
+    });
+
+    transaction();
+
+    res.json({
+      ok: true,
+      message: `Distribuição concluída com sucesso. ${totalDistribuido} leads distribuídos.`,
+      distribuidoCount: totalDistribuido
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// MENSAGENS (TEMPLATES)
+app.post("/mensagens", (req, res) => {
+  try {
+    const { nome, texto, ativa = 1 } = req.body;
+    if (!nome || !texto) {
+      return res.status(400).json({ ok: false, error: "Nome e Texto são obrigatórios." });
+    }
+
+    const id = randomUUID();
+    const now = nowIso();
+
+    db.prepare(`
+      INSERT INTO mensagens (id, nome, texto, ativa, criado_em)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, nome, texto, ativa, now);
+
+    res.json({
+      ok: true,
+      mensagem: { id, nome, texto, ativa, criado_em: now }
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/mensagens", (req, res) => {
+  try {
+    const mensagens = db.prepare("SELECT * FROM mensagens ORDER BY criado_em DESC").all();
+    res.json({ ok: true, mensagens });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.put("/mensagens/:id/ativar", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { ativa } = req.body || {};
+    
+    if (ativa !== undefined) {
+      db.prepare("UPDATE mensagens SET ativa = ? WHERE id = ?").run(Number(ativa), id);
+    } else {
+      // Toggle
+      const msg = db.prepare("SELECT ativa FROM mensagens WHERE id = ?").get(id);
+      if (msg) {
+        const novoStatus = msg.ativa === 1 ? 0 : 1;
+        db.prepare("UPDATE mensagens SET ativa = ? WHERE id = ?").run(novoStatus, id);
+      }
+    }
+
+    res.json({ ok: true, message: "Status da mensagem atualizado com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.put("/mensagens/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nome, texto, ativa } = req.body;
+
+    const msgExistente = db.prepare("SELECT * FROM mensagens WHERE id = ?").get(id);
+    if (!msgExistente) {
+      return res.status(404).json({ ok: false, error: "Modelo de mensagem não encontrado." });
+    }
+
+    const nomeFinal = nome !== undefined ? nome : msgExistente.nome;
+    const textoFinal = texto !== undefined ? texto : msgExistente.texto;
+    const ativaFinal = ativa !== undefined ? Number(ativa) : msgExistente.ativa;
+
+    db.prepare(`
+      UPDATE mensagens 
+      SET nome = ?, texto = ?, ativa = ?
+      WHERE id = ?
+    `).run(nomeFinal, textoFinal, ativaFinal, id);
+
+    res.json({ ok: true, message: "Modelo de mensagem atualizado com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.delete("/mensagens/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const result = db.prepare("DELETE FROM mensagens WHERE id = ?").run(id);
+    if (result.changes === 0) {
+      return res.status(404).json({ ok: false, error: "Modelo de mensagem não encontrado." });
+    }
+
+    res.json({ ok: true, message: "Modelo de mensagem excluído com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// WHATSAPP SESSIONS & DISPATCH
+app.post("/whatsapp/conectar/:vendedorId", async (req, res) => {
+  try {
+    const { vendedorId } = req.params;
+    const { telefone } = req.body;
+    
+    // Update access
+    const now = nowIso();
+    db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, vendedorId);
+    
+    await conectarWhatsapp(vendedorId, telefone);
+    res.json({ ok: true, message: "Iniciando conexão do WhatsApp." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/whatsapp/status/:vendedorId", async (req, res) => {
+  try {
+    const { vendedorId } = req.params;
+    
+    // Update access
+    const now = nowIso();
+    db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, vendedorId);
+    
+    const status = await checkSessionStatus(vendedorId);
+    res.json({ ok: true, ...status });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/whatsapp/desconectar/:vendedorId", async (req, res) => {
+  try {
+    const { vendedorId } = req.params;
+    const session = sessions.get(vendedorId);
+    if (session) {
+      await session.context.close().catch(() => {});
+      sessions.delete(vendedorId);
+    }
+    
+    // Update access
+    const now = nowIso();
+    db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, vendedorId);
+    
+    // Trigger queue update immediately on manual disconnect
+    processarFilaVendedores();
+
+    res.json({ ok: true, message: "WhatsApp desconectado com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
+  try {
+    const { vendedorId } = req.params;
+
+    // Update access
+    const now = nowIso();
+    db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, vendedorId);
+
+    const session = sessions.get(vendedorId);
+    if (!session || session.status !== "connected") {
+      return res.status(400).json({ ok: false, error: "WhatsApp não está conectado para este vendedor." });
+    }
+
+    const msgsAtivas = db.prepare("SELECT * FROM mensagens WHERE ativa = 1").all();
+    if (msgsAtivas.length === 0) {
+      return res.status(400).json({ ok: false, error: "Nenhum modelo de mensagem está ATIVO no painel do administrador. Vá no Admin -> Modelos de Mensagem e ative pelo menos um modelo (botão verde '🟢 Ativar')." });
+    }
+
+    const { limite } = req.body || {};
+
+    let query = `
+      SELECT * FROM leads 
+      WHERE vendedor_id = ? AND status = 'reservado'
+      ORDER BY criado_em ASC
+    `;
+    const params = [vendedorId];
+    if (limite && Number(limite) > 0) {
+      query += " LIMIT ?";
+      params.push(Number(limite));
+    }
+
+    const leads = db.prepare(query).all(...params);
+
+    if (leads.length === 0) {
+      return res.json({ ok: true, message: "Nenhum lead com status 'reservado' para enviar." });
+    }
+
+    // Run message sending loop in the background, rotating active messages
+    dispararMensagens(vendedorId, msgsAtivas.map(m => m.texto), leads)
+      .then((results) => {
+        console.log(`Disparos para vendedor ${vendedorId} concluídos:`, results);
+      })
+      .catch((err) => {
+        console.error(`Erro nos disparos para vendedor ${vendedorId}:`, err);
+      });
+
+    res.json({
+      ok: true,
+      message: `Disparo automático iniciado para ${leads.length} leads (com ${msgsAtivas.length} modelos ativos em rotação).`
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// PRE-VENDAS
+app.post("/pre-vendas", (req, res) => {
+  try {
+    const { lead_id, vendedor_id, observacoes = "" } = req.body;
+    if (!lead_id || !vendedor_id) {
+      return res.status(400).json({ ok: false, error: "Lead ID e Vendedor ID são obrigatórios." });
+    }
+
+    const id = randomUUID();
+    const now = nowIso();
+
+    // Update access
+    db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, vendedor_id);
+
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO pre_vendas (id, lead_id, vendedor_id, status, observacoes, criado_em, atualizado_em)
+        VALUES (?, ?, ?, 'Pendente', ?, ?, ?)
+      `).run(id, lead_id, vendedor_id, observacoes, now, now);
+
+      db.prepare(`
+        UPDATE leads 
+        SET status = 'Pré-venda feita', atualizado_em = ? 
+        WHERE id = ?
+      `).run(now, lead_id);
+    })();
+
+    res.json({ ok: true, message: "Pré-venda criada com sucesso.", preVendaId: id });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/pre-vendas", (req, res) => {
+  try {
+    const preVendas = db.prepare(`
+      SELECT p.*, l.empresa, l.telefone, l.nicho, v.nome as vendedor_nome
+      FROM pre_vendas p
+      JOIN leads l ON p.lead_id = l.id
+      JOIN vendedores v ON p.vendedor_id = v.id
+      ORDER BY p.criado_em DESC
+    `).all();
+    res.json({ ok: true, preVendas });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.put("/pre-vendas/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, observacoes } = req.body;
+
+    const now = nowIso();
+
+    db.transaction(() => {
+      db.prepare(`
+        UPDATE pre_vendas 
+        SET status = ?, observacoes = COALESCE(?, observacoes), atualizado_em = ? 
+        WHERE id = ?
+      `).run(status, observacoes || "", now, id);
+
+      if (status === "Aprovada") {
+        const preVenda = db.prepare("SELECT lead_id FROM pre_vendas WHERE id = ?").get(id);
+        if (preVenda) {
+          db.prepare("UPDATE leads SET status = 'Comprou', atualizado_em = ? WHERE id = ?")
+            .run(now, preVenda.lead_id);
+        }
+      }
+    })();
+
+    res.json({ ok: true, message: "Pré-venda atualizada com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// COLETAR LEADS (SOLICITADO PELO VENDEDOR)
+app.post("/vendedores/:id/coletar-leads", (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Check if seller exists and is active
+    const vendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
+    if (!vendedor) {
+      return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
+    }
+    if (vendedor.ativo === 0) {
+      return res.status(400).json({ ok: false, error: "Sua conta está inativa na fila de espera. Conecte seu WhatsApp para ser ativado." });
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartIso = todayStart.toISOString();
+
+    // Check how many leads were already assigned to him today
+    const count = db.prepare(`
+      SELECT COUNT(*) as total FROM leads 
+      WHERE vendedor_id = ? AND (
+        status = 'reservado' 
+        OR (status != 'disponivel' AND status != 'Vácuo' AND atualizado_em >= ?)
+      )
+    `).get(id, todayStartIso).total;
+
+    let limite = 25;
+    if (vendedor.suspensao_ate && new Date(vendedor.suspensao_ate) > new Date()) {
+      return res.status(400).json({ ok: false, error: "Sua conta está suspensa temporariamente para aquecimento do chip novo por 14 dias." });
+    } else if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
+      limite = 10;
+    } else {
+      limite = vendedor.limite_diario;
+    }
+
+    const capacidade = Math.max(0, limite - count);
+    if (capacidade <= 0) {
+      if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
+        return res.status(400).json({ ok: false, error: "Você já atingiu seu limite diário da Fase de Teste (10 leads). Escolha a opção de chip no seu painel para liberar o limite de 25 leads diários." });
+      }
+      return res.status(400).json({ ok: false, error: `Você já atingiu seu limite diário de ${vendedor.limite_diario} leads para hoje.` });
+    }
+
+    const batchSize = (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") ? 10 : 25;
+
+    // Fetch exactly batchSize leads
+    const leads = db.prepare(`
+      SELECT * FROM leads 
+      WHERE status = 'disponivel' AND vendedor_id IS NULL 
+      ORDER BY criado_em ASC 
+      LIMIT ?
+    `).all(batchSize);
+
+    if (leads.length === 0) {
+      return res.status(400).json({ ok: false, error: "Não há novos leads disponíveis no sistema neste momento. Peça ao administrador para capturar mais leads." });
+    }
+
+    const now = nowIso();
+    const updateStmt = db.prepare(`
+      UPDATE leads 
+      SET vendedor_id = ?, status = 'reservado', assigned_to = ?, assigned_at = ?, atualizado_em = ? 
+      WHERE id = ?
+    `);
+
+    db.transaction(() => {
+      for (const lead of leads) {
+        updateStmt.run(id, id, now, now, lead.id);
+      }
+    })();
+
+    res.json({
+      ok: true,
+      message: `Sucesso! Coletados ${leads.length} novos leads para a sua carteira.`
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// CANCELAR DISPARO DE MENSAGENS
+app.post("/whatsapp/cancelar-disparo/:vendedorId", (req, res) => {
+  try {
+    const { vendedorId } = req.params;
+    const session = sessions.get(vendedorId);
+    if (session) {
+      session.abortSending = true;
+      console.log(`[HTTP] Solicitação de cancelamento de disparo recebida para o vendedor: ${vendedorId}`);
+    }
+    res.json({ ok: true, message: "Solicitação de cancelamento enviada com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// ALTERAR OPÇÃO DE CHIP (PESSOAL OU NOVO) E SUSPENSÃO
+app.post("/vendedores/:id/opcao-chip", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { opcao } = req.body; // 'pessoal' ou 'novo'
+
+    if (!opcao || (opcao !== "pessoal" && opcao !== "novo")) {
+      return res.status(400).json({ ok: false, error: "Opção de chip inválida." });
+    }
+
+    const now = nowIso();
+    const vendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
+    if (!vendedor) {
+      return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
+    }
+
+    if (opcao === "pessoal") {
+      db.prepare(`
+        UPDATE vendedores 
+        SET opcoes_chip = 'pessoal', suspensao_ate = NULL, limite_diario = 25 
+        WHERE id = ?
+      `).run(id);
+    } else {
+      // Suspension for 14 days
+      const suspensaoAte = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+      db.prepare(`
+        UPDATE vendedores 
+        SET opcoes_chip = 'novo_aquecendo', suspensao_ate = ? 
+        WHERE id = ?
+      `).run(suspensaoAte, id);
+    }
+
+    const freshVendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
+    res.json({ ok: true, seller: freshVendedor, vendedor: freshVendedor });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Servidor rodando em http://localhost:${PORT}`);
+});

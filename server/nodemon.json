@@ -1,0 +1,12 @@
+{
+  "watch": ["index.js", "db.js", "scraper.js", "whatsapp.js"],
+  "ignore": [
+    "whatsapp-sessions/**",
+    "whatsapp-sessions/*",
+    "whatsapp-sessions",
+    "*.db",
+    "*.db-wal",
+    "*.db-shm",
+    "node_modules/**"
+  ]
+}
