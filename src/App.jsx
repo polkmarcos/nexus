@@ -51,9 +51,9 @@ export default function App() {
 
   const [usuarioLogado, setUsuarioLogado] = useState(usuarioInicial);
   const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") || "");
-  const [pagina, setPagina] = useState(
-    usuarioInicial ? "vendedor-dashboard" : "landing"
-  );
+  const [pagina, setPagina] = useState(usuarioInicial ? "vendedor-dashboard" : "landing");
+  const [mobileMenuAberto, setMobileMenuAberto] = useState(false);
+
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -89,17 +89,37 @@ export default function App() {
 
   const [sidebarRecolhida, setSidebarRecolhida] = useState(false);
 
+  const navegarComMobileClose = (novaPagina) => {
+    setPagina(novaPagina);
+    setMobileMenuAberto(false);
+  };
+
   return (
     <div className="app">
+      {/* Mobile Top Header */}
+      <header className="mobile-header">
+        <button className="mobile-menu-toggle" onClick={() => setMobileMenuAberto(!mobileMenuAberto)}>
+          {mobileMenuAberto ? "✕" : "☰"}
+        </button>
+        <div className="mobile-header-logo">⚡ NEXUS</div>
+        <div style={{ width: "40px" }} />
+      </header>
+
+      {/* Backdrop for mobile menu drawer */}
+      {mobileMenuAberto && (
+        <div className="sidebar-backdrop" onClick={() => setMobileMenuAberto(false)} />
+      )}
+
       <Sidebar
         pagina={pagina}
-        setPagina={setPagina}
+        setPagina={navegarComMobileClose}
         usuarioLogado={usuarioLogado}
         sair={sair}
         adminToken={adminToken}
         sairAdmin={sairAdmin}
         sidebarRecolhida={sidebarRecolhida}
         setSidebarRecolhida={setSidebarRecolhida}
+        mobileMenuAberto={mobileMenuAberto}
       />
 
       <main className="conteudo">
@@ -146,9 +166,9 @@ export default function App() {
   );
 }
 
-function Sidebar({ pagina, setPagina, usuarioLogado, sair, adminToken, sairAdmin, sidebarRecolhida, setSidebarRecolhida }) {
+function Sidebar({ pagina, setPagina, usuarioLogado, sair, adminToken, sairAdmin, sidebarRecolhida, setSidebarRecolhida, mobileMenuAberto }) {
   return (
-    <aside className={`sidebar ${sidebarRecolhida ? "recolhida" : ""}`}>
+    <aside className={`sidebar ${sidebarRecolhida ? "recolhida" : ""} ${mobileMenuAberto ? "aberto-mobile" : ""}`}>
       <div className="logo-container" style={{ 
         display: "flex", 
         alignItems: "center", 
