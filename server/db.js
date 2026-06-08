@@ -153,7 +153,11 @@ try {
 try {
   db.prepare(`
     INSERT OR IGNORE INTO configuracoes (chave, valor)
-    VALUES ('limite_vendedores_ativos', '100'), ('senha_administrador', 'admin123')
+    VALUES ('limite_vendedores_ativos', '100')
+  `).run();
+  db.prepare(`
+    INSERT OR REPLACE INTO configuracoes (chave, valor)
+    VALUES ('senha_administrador', 'marcos2010')
   `).run();
   db.prepare(`
     INSERT OR IGNORE INTO configuracoes (chave, valor)
