@@ -1,0 +1,11 @@
+node_modules
+server/node_modules
+dist
+whatsapp-sessions
+server/whatsapp-sessions
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.git
+.gitignore
