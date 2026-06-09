@@ -62,6 +62,39 @@ export async function scrapeGoogleMaps(query, nicho, limit = 20, checkCancelled,
     const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     
+    // Handle Google Cookie Consent / Redirect (essential on clean cloud environments)
+    try {
+      await page.waitForTimeout(1000);
+      const currentUrl = page.url();
+      if (currentUrl.includes("consent.google.com")) {
+        console.log("[Scraper] Redirecionado para consent.google.com. Aceitando cookies...");
+        const acceptBtn = await page.$('button:has-text("Aceitar tudo"), button:has-text("Accept all"), form[action*="consent.google.com"] button, button');
+        if (acceptBtn) {
+          await acceptBtn.click();
+          await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+          console.log("[Scraper] Consentimento aceito.");
+        }
+      }
+      
+      const inlineConsentSelectors = [
+        'button[aria-label="Aceitar tudo"]',
+        'button[aria-label="Accept all"]',
+        'button:has-text("Aceitar tudo")',
+        'button:has-text("Accept all")',
+        'button:has-text("Concordo")',
+        'button:has-text("Agree")'
+      ].join(', ');
+      
+      const inlineConsentBtn = await page.$(inlineConsentSelectors);
+      if (inlineConsentBtn) {
+        console.log("[Scraper] Dialogo de consentimento detectado na página. Aceitando...");
+        await inlineConsentBtn.click();
+        await page.waitForTimeout(1000);
+      }
+    } catch (consentErr) {
+      console.log("[Scraper] Aviso ao tratar consentimento de cookies:", consentErr.message);
+    }
+    
     // Allow panel loading
     try {
       await page.waitForSelector('a[href*="/maps/place/"]', { timeout: 15000 });
