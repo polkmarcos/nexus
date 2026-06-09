@@ -218,7 +218,7 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                 throw new Error("Não foi possível abrir a tela de entrada de telefone (timeout ao clicar no botão).");
               }
               
-              // Dump all elements inside the pairing container to logs for direct inspection
+              // Dump elements in the modal to check initial state
               try {
                 const dump = await page.evaluate(() => {
                   const elements = Array.from(document.querySelectorAll('input, button, [role="button"], select'));
@@ -239,195 +239,41 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                 logDebug(vendedorId, `Erro ao fazer dump dos elementos: ${dumpErr.message}`);
               }
 
-              // Select Brazil (+55) country code
-              logDebug(vendedorId, `Tentando selecionar o país Brasil (+55)...`);
-              try {
-                // Save screenshot of the initial modal
-                await page.screenshot({ path: path.join(sessionDir, "debug-screenshot.png") }).catch(() => {});
-
-                // Find the country selector button dynamically based on common text patterns or "+1" pattern
-                const countryBtnHandle = await page.evaluateHandle(() => {
-                  const elements = Array.from(document.querySelectorAll('div, span, button, p, [data-testid="phone-number-country-selector"]'));
-                  for (const el of elements) {
-                    const text = (el.innerText || "").trim();
-                    if (
-                      text === "Estados Unidos" || 
-                      text === "United States" || 
-                      text === "Escolha o país" || 
-                      text === "Choose a country" ||
-                      text === "Change country"
-                    ) {
-                      return el;
-                    }
-                  }
-                  // Look for an element displaying "+1" (or similar country code prefix)
-                  for (const el of elements) {
-                    const text = (el.innerText || "").trim();
-                    if (/^\+\d{1,3}$/.test(text)) {
-                      return el;
-                    }
-                  }
-                  return document.querySelector('[data-testid="phone-number-country-selector"], [data-testid="country-code-dropdown"]');
-                });
-                
-                const countryBtn = countryBtnHandle.asElement();
-                
-                if (countryBtn) {
-                  logDebug(vendedorId, `Botão do seletor de país localizado. Clicando com eventos completos...`);
-                  await countryBtn.click({ force: true }).catch(() => {});
-                  await page.evaluate(el => {
-                    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-                    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                  }, countryBtn);
-                  await new Promise(r => setTimeout(r, 1500));
-                  
-                  // Save screenshot of the opened list
-                  await page.screenshot({ path: path.join(sessionDir, "debug-screenshot.png") }).catch(() => {});
-
-                  // Dump elements when the country dropdown is opened to check the search input and options
-                  try {
-                    const dumpList = await page.evaluate(() => {
-                      const elements = Array.from(document.querySelectorAll('input, button, [role="button"], select, [role="option"]'));
-                      return elements.map(el => {
-                        return {
-                          tagName: el.tagName,
-                          type: el.getAttribute('type'),
-                          dataTestId: el.getAttribute('data-testid'),
-                          placeholder: el.getAttribute('placeholder'),
-                          value: el.value || '',
-                          text: (el.innerText || '').trim(),
-                          role: el.getAttribute('role'),
-                          outerHTML: el.outerHTML.substring(0, 150)
-                        };
-                      });
-                    });
-                    logDebug(vendedorId, `DEBUG DOM SELETOR ABERTO: ${JSON.stringify(dumpList, null, 2)}`);
-                  } catch (dumpErr) {
-                    logDebug(vendedorId, `Erro ao fazer dump do seletor aberto: ${dumpErr.message}`);
-                  }
-                  
-                  // Look for search input inside the dropdown/popover or any text input
-                  const searchInput = await page.$('input:not([data-testid="phone-number-input"])');
-                  if (searchInput) {
-                    logDebug(vendedorId, `Campo de busca de país localizado. Digitando "Brasil"...`);
-                    await searchInput.focus();
-                    await searchInput.fill("");
-                    await searchInput.type("Brasil", { delay: 100 });
-                    await new Promise(r => setTimeout(r, 1000));
-                    
-                    const optionClicked = await page.evaluate(() => {
-                      const divs = Array.from(document.querySelectorAll('div, span, p, li, [role="option"]'));
-                      for (const el of divs) {
-                        const text = (el.innerText || "").trim();
-                        if (text === "Brasil" || text === "Brazil") {
-                          el.scrollIntoView({ block: "center" });
-                          el.click();
-                          return true;
-                        }
-                      }
-                      for (const el of divs) {
-                        const text = (el.innerText || "").trim();
-                        if (text.includes("Brasil") || text.includes("Brazil")) {
-                          el.scrollIntoView({ block: "center" });
-                          el.click();
-                          return true;
-                        }
-                      }
-                      return false;
-                    });
-                    logDebug(vendedorId, `Tentativa 1 de clique na opção por texto: ${optionClicked}`);
-                    
-                    if (!optionClicked) {
-                      logDebug(vendedorId, `Tentando buscar por "Brazil" em inglês...`);
-                      await searchInput.focus();
-                      await page.keyboard.down("Control");
-                      await page.keyboard.press("A");
-                      await page.keyboard.up("Control");
-                      await page.keyboard.press("Backspace");
-                      await searchInput.type("Brazil", { delay: 100 });
-                      await new Promise(r => setTimeout(r, 1000));
-                      
-                      const optionClicked2 = await page.evaluate(() => {
-                        const divs = Array.from(document.querySelectorAll('div, span, p, li, [role="option"]'));
-                        for (const el of divs) {
-                          const text = (el.innerText || "").trim();
-                          if (text === "Brasil" || text === "Brazil") {
-                            el.scrollIntoView({ block: "center" });
-                            el.click();
-                            return true;
-                          }
-                        }
-                        return false;
-                      });
-                      logDebug(vendedorId, `Tentativa 2 de clique na opção por texto: ${optionClicked2}`);
-                    }
-                  } else {
-                    logDebug(vendedorId, `Campo de busca não encontrado. Buscando "Brasil"/"Brazil" diretamente na lista...`);
-                    const optionClickedDirect = await page.evaluate(() => {
-                      const divs = Array.from(document.querySelectorAll('div, span, p, li, [role="option"]'));
-                      for (const el of divs) {
-                        const text = (el.innerText || "").trim();
-                        if (text === "Brasil" || text === "Brazil") {
-                          el.scrollIntoView({ block: "center" });
-                          el.click();
-                          return true;
-                        }
-                      }
-                      return false;
-                    });
-                    logDebug(vendedorId, `Clique direto na lista: ${optionClickedDirect}`);
-                  }
-                  await new Promise(r => setTimeout(r, 1000));
-                } else {
-                  logDebug(vendedorId, `Botão de seletor de país não encontrado.`);
-                }
-              } catch (countryErr) {
-                logDebug(vendedorId, `Erro ao tentar selecionar o país: ${countryErr.message}`);
-              }
-
               if (phoneInput) {
-                logDebug(vendedorId, `Focando e limpando o campo de telefone...`);
+                logDebug(vendedorId, `Limpando o campo de telefone...`);
+                // Clear using page.evaluate first to trigger React bindings
+                await page.evaluate(el => {
+                  el.value = "";
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
+                }, phoneInput);
+                
                 await phoneInput.focus();
                 await phoneInput.click({ force: true }).catch(() => {});
                 
+                // Keyboard backup clear
                 await page.keyboard.down("Control");
                 await page.keyboard.press("A");
                 await page.keyboard.up("Control");
                 await page.keyboard.press("Backspace");
-                
-                let cleanPhone = telefone.replace(/\D/g, "");
-                
-                // Read current text from selector to check if we successfully changed it to Brazil (+55)
-                const currentCountryText = await page.evaluate(() => {
-                  const el = document.querySelector('[data-testid="phone-number-country-selector"]');
-                  return el ? (el.innerText || "").trim() : "";
-                });
-                
-                logDebug(vendedorId, `País detectado no seletor após configuração: "${currentCountryText}"`);
-                
-                let phoneToType = "";
-                // If country is Brazil/Brasil, we type only the number (without 55)
-                if (currentCountryText.includes("Brasil") || currentCountryText.includes("Brazil") || currentCountryText.includes("55")) {
-                  if (cleanPhone.startsWith("55") && cleanPhone.length >= 12) {
-                    phoneToType = cleanPhone.substring(2);
-                  } else {
-                    phoneToType = cleanPhone;
-                  }
-                } else {
-                  // Fallback: If dropdown selection failed (still showing US or Iran), we type +55 directly to trigger automated country swap
-                  if (cleanPhone.startsWith("55") && cleanPhone.length >= 12) {
-                    phoneToType = "+" + cleanPhone;
-                  } else {
-                    phoneToType = "+55" + cleanPhone;
-                  }
+                for (let i = 0; i < 15; i++) {
+                  await page.keyboard.press("Backspace");
                 }
                 
-                logDebug(vendedorId, `Digitando o número de telefone: ${phoneToType}`);
-                await page.keyboard.type(phoneToType, { delay: 100 });
-                await new Promise(r => setTimeout(r, 500));
-                await page.keyboard.press("Enter");
+                let cleanPhone = telefone.replace(/\D/g, "");
+                let phoneToType = "";
+                if (cleanPhone.startsWith("55") && cleanPhone.length >= 12) {
+                  phoneToType = "+" + cleanPhone;
+                } else {
+                  phoneToType = "+55" + cleanPhone;
+                }
                 
+                logDebug(vendedorId, `Digitando o número de telefone completo com DDI (+55): ${phoneToType}`);
+                await page.keyboard.type(phoneToType, { delay: 150 });
+                await new Promise(r => setTimeout(r, 1000));
+                
+                // Save screenshot after typing to see if it changed country to Brazil
+                await page.screenshot({ path: path.join(sessionDir, "debug-screenshot.png") }).catch(() => {});
+
                 const nextSelector = 'button:has-text("Avançar"), button:has-text("Next"), button:has-text("Avancar"), button[type="submit"]';
                 const nextBtn = await page.$(nextSelector).catch(() => null);
                 if (nextBtn) {
@@ -441,7 +287,7 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                 }
                 
                 // Save screenshot after clicking "Avançar"
-                await new Promise(r => setTimeout(r, 2000));
+                await new Promise(r => setTimeout(r, 3000));
                 await page.screenshot({ path: path.join(sessionDir, "debug-screenshot.png") }).catch(() => {});
                 
                 logDebug(vendedorId, `Fluxo de telefone enviado com sucesso.`);
