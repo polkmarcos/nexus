@@ -3727,6 +3727,36 @@ function VendedorWhatsapp({ usuarioLogado }) {
             <small style={{ color: "var(--text-tertiary)", marginTop: "4px" }}>Geralmente leva de 5 a 15 segundos para carregar o sistema.</small>
           </div>
         )}
+
+        {/* Diagnostic console */}
+        <div style={{ marginTop: "30px", width: "100%", borderTop: "1px solid var(--border-color)", paddingTop: "20px" }}>
+          <details>
+            <summary style={{ cursor: "pointer", color: "var(--text-secondary)", fontSize: "0.9rem", fontWeight: "600" }}>
+              🛠️ Ver Logs de Depuração do Servidor
+            </summary>
+            <div style={{ marginTop: "15px", background: "#111", padding: "15px", borderRadius: "8px", border: "1px solid #333", maxHeight: "250px", overflowY: "auto", textAlign: "left" }}>
+              <button 
+                type="button"
+                className="btn btn-secondary" 
+                style={{ padding: "4px 8px", fontSize: "0.8rem", margin: "0 0 10px 0", float: "right" }}
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_URL}/whatsapp/debug-logs`);
+                    const txt = await res.text();
+                    document.getElementById("debug-log-box").innerText = txt;
+                  } catch (e) {
+                    document.getElementById("debug-log-box").innerText = "Erro ao carregar logs: " + e.message;
+                  }
+                }}
+              >
+                🔄 Atualizar Logs
+              </button>
+              <pre id="debug-log-box" style={{ margin: 0, fontSize: "0.8rem", color: "#0f0", fontFamily: "Courier New, monospace", whiteSpace: "pre-wrap" }}>
+                Clique em 'Atualizar Logs' para ver as mensagens do servidor.
+              </pre>
+            </div>
+          </details>
+        </div>
       </div>
     </section>
   );

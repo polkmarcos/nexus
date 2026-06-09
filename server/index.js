@@ -1428,6 +1428,24 @@ app.get("/whatsapp/status/:vendedorId", async (req, res) => {
   }
 });
 
+app.get("/whatsapp/debug-logs", (req, res) => {
+  try {
+    const baseSessionsDir = process.env.WHATSAPP_SESSIONS_DIR || path.resolve("whatsapp-sessions");
+    const logFile = path.resolve(baseSessionsDir, "whatsapp-debug.log");
+    
+    if (fs.existsSync(logFile)) {
+      const content = fs.readFileSync(logFile, "utf8");
+      const lines = content.trim().split("\n");
+      const lastLines = lines.slice(-100).join("\n");
+      res.type("text/plain").send(lastLines);
+    } else {
+      res.status(404).send("Nenhum log de depuração disponível.");
+    }
+  } catch (error) {
+    res.status(500).send("Erro ao carregar logs: " + error.message);
+  }
+});
+
 app.post("/whatsapp/desconectar/:vendedorId", async (req, res) => {
   try {
     const { vendedorId } = req.params;

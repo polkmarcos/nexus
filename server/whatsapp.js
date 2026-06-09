@@ -53,30 +53,64 @@ export function formatarTelefoneWhatsApp(telefone) {
   return clean;
 }
 
+
+/**
+ * Diagnostic logger that prints to console and writes to whatsapp-debug.log inside the sessions directory.
+ */
+export function logDebug(vendedorId, mensagem) {
+  const logMsg = `[${new Date().toLocaleString("pt-BR")}] [Vendedor ${vendedorId}] ${mensagem}`;
+  console.log(logMsg);
+  try {
+    const baseSessionsDir = process.env.WHATSAPP_SESSIONS_DIR || path.resolve("whatsapp-sessions");
+    const logFile = path.resolve(baseSessionsDir, "whatsapp-debug.log");
+    
+    if (!fs.existsSync(baseSessionsDir)) {
+      fs.mkdirSync(baseSessionsDir, { recursive: true });
+    }
+    
+    fs.appendFileSync(logFile, logMsg + "\n");
+  } catch (e) {
+    console.error("Erro ao escrever no arquivo de logs de depuração:", e.message);
+  }
+}
+
 /**
  * Starts or connects to a WhatsApp Web session for a seller, optionally using a phone number.
  */
 export async function conectarWhatsapp(vendedorId, telefone) {
+  logDebug(vendedorId, `Solicitação de conexão do WhatsApp recebida. Método: ${telefone ? "Telefone: " + telefone : "QR Code"}`);
+
   if (sessions.has(vendedorId)) {
     const s = sessions.get(vendedorId);
     if (s.status === "connected") {
+      logDebug(vendedorId, `Sessão já está ativa e conectada.`);
       return s;
     }
-    console.log(`[WhatsApp] Fechando sessão anterior do vendedor ${vendedorId} em estado "${s.status}" para iniciar nova conexão.`);
+    logDebug(vendedorId, `Fechando sessão anterior do vendedor em estado "${s.status}" para iniciar nova conexão.`);
     try {
       if (s.context) {
         await s.context.close().catch(() => {});
       }
     } catch (e) {
-      console.error("[WhatsApp] Erro ao fechar contexto anterior:", e.message);
+      logDebug(vendedorId, `Erro ao fechar contexto anterior: ${e.message}`);
     }
     sessions.delete(vendedorId);
   }
 
-  console.log(`Iniciando sessão do WhatsApp para o vendedor: ${vendedorId} (Método: ${telefone ? "Telefone: " + telefone : "QR Code"})`);
-  
   const baseSessionsDir = process.env.WHATSAPP_SESSIONS_DIR || path.resolve("whatsapp-sessions");
   const sessionDir = path.resolve(baseSessionsDir, vendedorId);
+  
+  // Clean SingletonLock symlink to prevent Chromium startup crashes in Docker
+  try {
+    const lockPath = path.join(sessionDir, "SingletonLock");
+    if (fs.existsSync(lockPath)) {
+      fs.unlinkSync(lockPath);
+      logDebug(vendedorId, `Lock de sessão anterior 'SingletonLock' removido de forma preventiva em: ${lockPath}`);
+    }
+  } catch (lockErr) {
+    logDebug(vendedorId, `Aviso ao remover lock 'SingletonLock' anterior: ${lockErr.message}`);
+  }
+
   if (!fs.existsSync(baseSessionsDir)) {
     fs.mkdirSync(baseSessionsDir, { recursive: true });
   }
@@ -95,6 +129,7 @@ export async function conectarWhatsapp(vendedorId, telefone) {
   // Perform Playwright startup asynchronously so the HTTP request returns instantly
   (async () => {
     try {
+      logDebug(vendedorId, `Iniciando persistent context do Chromium no diretório: ${sessionDir}`);
       const context = await chromium.launchPersistentContext(sessionDir, {
         headless: true,
         userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -111,6 +146,7 @@ export async function conectarWhatsapp(vendedorId, telefone) {
         ]
       });
 
+      logDebug(vendedorId, `Navegador Chromium lançado com sucesso. Criando nova página...`);
       const page = await context.newPage();
       page.setDefaultNavigationTimeout(60000);
       page.setDefaultTimeout(60000);
@@ -119,10 +155,12 @@ export async function conectarWhatsapp(vendedorId, telefone) {
       sessionInfo.page = page;
       sessionInfo.status = "loading";
 
-      // Navigate to WhatsApp Web
+      logDebug(vendedorId, `Navegando para https://web.whatsapp.com/...`);
       await page.goto("https://web.whatsapp.com/", { waitUntil: "domcontentloaded" });
+      logDebug(vendedorId, `Navegação para WhatsApp Web concluída.`);
 
       if (telefone) {
+        logDebug(vendedorId, `Iniciando fluxo de login por número de telefone: ${telefone}`);
         try {
           const linkSelector = [
             '[data-testid="link-device-phone-number-button"]',
@@ -135,16 +173,18 @@ export async function conectarWhatsapp(vendedorId, telefone) {
             '[role="button"]:has-text("Conectar com")'
           ].join(', ');
           
-          console.log("[WhatsApp] Aguardando inicialização da página e aparecimento do botão de telefone ou chat list...");
+          logDebug(vendedorId, `Aguardando botão de pareamento ou painel de chat...`);
           const elementFound = await Promise.race([
             page.waitForSelector('[data-testid="chat-list"], #pane-side', { timeout: 60000 }).then(() => "logged_in"),
             page.waitForSelector(linkSelector, { timeout: 60000 }).then(() => "link_button")
           ]).catch(() => "timeout");
 
+          logDebug(vendedorId, `Elemento localizado na página: ${elementFound}`);
+
           if (elementFound === "link_button") {
             const linkBtn = await page.$(linkSelector);
             if (linkBtn) {
-              console.log("[WhatsApp] Botão de link por telefone localizado. Clicando...");
+              logDebug(vendedorId, `Botão de link por telefone localizado. Clicando...`);
               await linkBtn.click({ force: true }).catch(async () => {
                 await page.evaluate(el => {
                   el.scrollIntoView({ block: 'center' });
@@ -153,8 +193,10 @@ export async function conectarWhatsapp(vendedorId, telefone) {
               });
               
               const inputSelector = 'input[data-testid="phone-number-input"], input[type="text"], input[placeholder]';
+              logDebug(vendedorId, `Aguardando campo de entrada do telefone...`);
               const phoneInput = await page.waitForSelector(inputSelector, { timeout: 30000 });
               if (phoneInput) {
+                logDebug(vendedorId, `Focando e limpando o campo de telefone...`);
                 await phoneInput.focus();
                 await phoneInput.click({ force: true }).catch(() => {});
                 
@@ -168,6 +210,7 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                   cleanPhone = cleanPhone.substring(2);
                 }
                 
+                logDebug(vendedorId, `Digitando o número de telefone (DDI+DDD): ${cleanPhone}`);
                 await page.keyboard.type(cleanPhone, { delay: 100 });
                 await new Promise(r => setTimeout(r, 500));
                 await page.keyboard.press("Enter");
@@ -175,6 +218,7 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                 const nextSelector = 'button:has-text("Avançar"), button:has-text("Next"), button:has-text("Avancar"), button[type="submit"]';
                 const nextBtn = await page.$(nextSelector).catch(() => null);
                 if (nextBtn) {
+                  logDebug(vendedorId, `Clicando no botão 'Avançar'...`);
                   await nextBtn.click({ force: true }).catch(async () => {
                     await page.evaluate(el => {
                       el.scrollIntoView({ block: 'center' });
@@ -182,21 +226,25 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                     }, nextBtn);
                   });
                 }
+                logDebug(vendedorId, `Fluxo de telefone enviado com sucesso.`);
               }
             }
           } else if (elementFound === "logged_in") {
+            logDebug(vendedorId, `Usuário já está conectado no WhatsApp Web.`);
             sessionInfo.status = "connected";
+          } else {
+            logDebug(vendedorId, `Timeout aguardando elementos iniciais do WhatsApp Web.`);
           }
         } catch (err) {
-          console.error("[WhatsApp] Erro na configuração do pareamento por telefone:", err.message);
+          logDebug(vendedorId, `Erro interno na configuração de pareamento por telefone: ${err.message}`);
         }
       }
 
-      // Start background monitor loop
+      logDebug(vendedorId, `Iniciando monitor de sessão...`);
       sessionInfo.monitorPromise = monitorSession(vendedorId, context, page);
 
     } catch (err) {
-      console.error(`[WhatsApp] Erro na inicialização da sessão para ${vendedorId}:`, err.message);
+      logDebug(vendedorId, `ERRO CRÍTICO na inicialização da sessão: ${err.message}\nStack: ${err.stack}`);
       sessionInfo.status = "disconnected";
       if (sessionInfo.context) {
         await sessionInfo.context.close().catch(() => {});
@@ -221,6 +269,7 @@ async function monitorSession(vendedorId, context, page) {
     
     while (attempts < maxAttempts) {
       if (page.isClosed()) {
+        logDebug(vendedorId, `Página do navegador foi fechada pelo sistema.`);
         session.status = "disconnected";
         break;
       }
@@ -231,7 +280,7 @@ async function monitorSession(vendedorId, context, page) {
         session.status = "connected";
         session.qrCode = null;
         session.phoneCode = null;
-        console.log(`WhatsApp do vendedor ${vendedorId} conectado com SUCESSO!`);
+        logDebug(vendedorId, `WhatsApp conectado com SUCESSO!`);
         
         // Update database info
         db.prepare("UPDATE vendedores SET ativo = 1 WHERE id = ?").run(vendedorId);
@@ -241,6 +290,9 @@ async function monitorSession(vendedorId, context, page) {
       // Check if syncing/loading conversations after scanning
       const isSyncing = await page.$('[data-testid="startup-progress"], [role="progressbar"], .progress, div:has-text("Carregando"), div:has-text("Loading")');
       if (isSyncing) {
+        if (session.status !== "syncing") {
+          logDebug(vendedorId, `WhatsApp está sincronizando conversas...`);
+        }
         session.status = "syncing";
         session.qrCode = null;
         session.phoneCode = null;
@@ -249,13 +301,14 @@ async function monitorSession(vendedorId, context, page) {
       // Check if click-to-retry or generic reload buttons are there
       const retryBtn = await page.$('button._ak45, button[data-testid="popup-controls-ok"]');
       if (retryBtn) {
+        logDebug(vendedorId, `Botão de erro do popup/recarregar detectado. Clicando...`);
         await retryBtn.click().catch(() => {});
       }
 
       // Auto-refresh expired QR codes
       const qrRefreshBtn = await page.$('[data-testid="qrcode"] button, [data-testid="qrcode"] [role="button"], button:has-text("Clique para recarregar"), button:has-text("Click to reload"), span[data-icon="refresh"]');
       if (qrRefreshBtn) {
-        console.log(`[WhatsApp] QR code expirado detectado para o vendedor ${vendedorId}. Clicando para recarregar...`);
+        logDebug(vendedorId, `QR code expirado detectado. Clicando para recarregar...`);
         await qrRefreshBtn.click().catch(() => {});
       }
 
@@ -283,6 +336,9 @@ async function monitorSession(vendedorId, context, page) {
       });
 
       if (phoneCode) {
+        if (session.phoneCode !== phoneCode) {
+          logDebug(vendedorId, `Código de pareamento por telefone obtido: ${phoneCode}`);
+        }
         session.phoneCode = phoneCode;
         if (session.status !== "syncing") {
           session.status = "connecting";
@@ -297,6 +353,9 @@ async function monitorSession(vendedorId, context, page) {
         
         const canvas = await page.$('canvas');
         if (canvas) {
+          if (session.status !== "syncing" && session.status !== "connecting") {
+            logDebug(vendedorId, `Canvas do QR Code detectado na página. Status definido para connecting.`);
+          }
           if (session.status !== "syncing") {
             session.status = "connecting";
           }
@@ -312,12 +371,13 @@ async function monitorSession(vendedorId, context, page) {
     }
 
     if (session.status !== "connected") {
+      logDebug(vendedorId, `Tempo limite excedido ou monitoramento encerrado sem conexão.`);
       session.status = "disconnected";
       await context.close().catch(() => {});
       sessions.delete(vendedorId);
     }
   } catch (err) {
-    console.error(`Erro ao monitorar sessão ${vendedorId}:`, err.message);
+    logDebug(vendedorId, `Erro crítico ao monitorar sessão: ${err.message}`);
     session.status = "disconnected";
     await context.close().catch(() => {});
     sessions.delete(vendedorId);
