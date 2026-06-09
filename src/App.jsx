@@ -3636,35 +3636,81 @@ function VendedorWhatsapp({ usuarioLogado }) {
             
             {phoneCode ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
-                <div 
-                  style={{ 
-                    background: "var(--bg-tertiary)", 
-                    padding: "20px 40px", 
-                    borderRadius: "12px", 
-                    border: "2px dashed var(--primary)", 
-                    fontSize: "2.5rem", 
-                    fontWeight: "800", 
-                    letterSpacing: "0.15em", 
-                    color: "var(--primary)",
-                    margin: "20px 0",
-                    cursor: "pointer"
-                  }}
-                  onClick={() => {
-                    navigator.clipboard.writeText(phoneCode);
-                    alert(`Código copiado: ${phoneCode}`);
-                  }}
-                  title="Clique para copiar o código"
-                >
-                  {phoneCode}
+                {/* Visual Alert Box */}
+                <div style={{ 
+                  background: "rgba(212, 175, 55, 0.1)", 
+                  border: "1px solid var(--primary)", 
+                  padding: "15px 20px", 
+                  borderRadius: "8px", 
+                  marginBottom: "20px",
+                  textAlign: "center",
+                  maxWidth: "450px",
+                  width: "100%"
+                }}>
+                  <strong style={{ color: "var(--primary)", display: "block", fontSize: "1.1rem", marginBottom: "5px" }}>
+                    🔑 Código de Pareamento Disponível!
+                  </strong>
+                  <span style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
+                    Passe este código de 8 dígitos para o funcionário digitar no celular dele para concluir o cadastro do vendedor.
+                  </span>
+                </div>
+
+                {/* Big Explicit Code Display */}
+                <div style={{ textAlign: "center", marginBottom: "25px", width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <span style={{ fontSize: "0.85rem", color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "1px" }}>
+                    Código a ser digitado no Celular:
+                  </span>
+                  <div 
+                    style={{ 
+                      background: "var(--bg-tertiary)", 
+                      padding: "20px 40px", 
+                      borderRadius: "12px", 
+                      border: "2px dashed var(--primary)", 
+                      fontSize: "3rem", 
+                      fontWeight: "900", 
+                      letterSpacing: "0.15em", 
+                      color: "var(--primary)",
+                      margin: "10px 0",
+                      cursor: "pointer",
+                      boxShadow: "0 0 15px rgba(212, 175, 55, 0.2)",
+                      maxWidth: "380px",
+                      width: "100%",
+                      textAlign: "center"
+                    }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(phoneCode);
+                      alert(`Código copiado: ${phoneCode}`);
+                    }}
+                    title="Clique para copiar o código"
+                  >
+                    {phoneCode}
+                  </div>
+                  <span style={{ fontSize: "0.8rem", color: "var(--text-tertiary)" }}>
+                    💡 Clique no código acima para copiá-lo.
+                  </span>
                 </div>
                 
+                {/* Step-by-Step Instructions */}
                 <div className="card" style={{ maxWidth: "450px", textAlign: "left", width: "100%", background: "var(--bg-tertiary)" }}>
-                  <h4 style={{ margin: "0 0 10px 0", color: "var(--text-primary)" }}>Passo a passo no Celular:</h4>
-                  <ol style={{ paddingLeft: "20px", margin: 0, color: "var(--text-secondary)", lineHeight: "1.6" }}>
-                    <li>Abra o aplicativo do <strong>WhatsApp</strong> no seu aparelho.</li>
-                    <li>Vá em <strong>Configurações</strong> (ou nos 3 pontinhos no Android) e selecione <strong>Aparelhos Conectados</strong>.</li>
-                    <li>Clique em <strong>Conectar um Aparelho</strong> e depois em <strong>Conectar com número de telefone</strong> (Link with phone number instead).</li>
-                    <li>Digite o código de 8 dígitos acima na tela do seu WhatsApp.</li>
+                  <h4 style={{ margin: "0 0 15px 0", color: "var(--text-primary)", borderBottom: "1px solid var(--border-color)", paddingBottom: "10px" }}>
+                    📱 Como o funcionário deve cadastrar no celular:
+                  </h4>
+                  <ol style={{ paddingLeft: "20px", margin: 0, color: "var(--text-secondary)", lineHeight: "1.8", fontSize: "0.95rem" }}>
+                    <li style={{ marginBottom: "8px" }}>
+                      Abra o aplicativo do <strong>WhatsApp</strong> no celular que será usado para vender.
+                    </li>
+                    <li style={{ marginBottom: "8px" }}>
+                      Acesse as <strong>Configurações</strong> (ou toque nos <strong>3 pontinhos</strong> no canto superior direito no Android) e selecione <strong>Aparelhos Conectados</strong>.
+                    </li>
+                    <li style={{ marginBottom: "8px" }}>
+                      Toque no botão <strong>Conectar um Aparelho</strong>.
+                    </li>
+                    <li style={{ marginBottom: "8px" }}>
+                      Na tela da câmera que se abre, toque em <strong>Conectar com número de telefone</strong> (ou <i>Link with phone number instead</i>) na parte inferior da tela.
+                    </li>
+                    <li style={{ marginBottom: "8px" }}>
+                      Digite o código de 8 dígitos acima (<strong>{phoneCode}</strong>) na tela do celular.
+                    </li>
                   </ol>
                 </div>
                 
@@ -3687,13 +3733,29 @@ function VendedorWhatsapp({ usuarioLogado }) {
                 </span>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", margin: "20px 0" }}>
-                <div className="loading-spinner"></div>
-                <p style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>
-                  {status === "syncing" 
-                    ? "Sincronizando dados com o WhatsApp..." 
-                    : "Gerando QR Code ou Código de Pareamento pelo WhatsApp..."}
-                </p>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", margin: "20px 0", maxWidth: "450px", width: "100%" }}>
+                <div className="loading-spinner" style={{ marginBottom: "20px" }}></div>
+                
+                <h4 style={{ color: "var(--text-primary)", marginBottom: "15px" }}>
+                  {status === "syncing" ? "Sincronizando conversas..." : "Solicitando código de pareamento..."}
+                </h4>
+                
+                <div style={{ width: "100%", textAlign: "left", background: "var(--bg-tertiary)", padding: "15px", borderRadius: "8px", fontSize: "0.85rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px", color: "var(--success)" }}>
+                    <span>✓</span> <span>Navegador virtual iniciado no servidor</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px", color: "var(--success)" }}>
+                    <span>✓</span> <span>Conectado à página do WhatsApp Web</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px", color: status === "syncing" ? "var(--success)" : "var(--primary)" }}>
+                    <span>{status === "syncing" ? "✓" : "⚡"}</span> 
+                    <span>{status === "syncing" ? "Número de telefone enviado" : "Enviando número e aguardando o código..."}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", color: status === "syncing" ? "var(--primary)" : "var(--text-tertiary)" }}>
+                    <span>{status === "syncing" ? "⚡" : "○"}</span> 
+                    <span>{status === "syncing" ? "Sincronizando dados com o aparelho..." : "Geração do código de 8 dígitos no painel (pode levar 10-15s)"}</span>
+                  </div>
+                </div>
               </div>
             )}
             

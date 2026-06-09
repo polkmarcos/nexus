@@ -392,22 +392,32 @@ async function monitorSession(vendedorId, context, page) {
 
       // Check for phone pairing code
       const phoneCode = await page.evaluate(() => {
-        const elements = Array.from(document.querySelectorAll('div, span, button'));
+        const elements = Array.from(document.querySelectorAll('div, span, button, p'));
         for (const el of elements) {
-          const text = (el.innerText || "").trim();
+          const text = (el.innerText || "").trim().toUpperCase();
           if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(text)) {
             return text;
           }
           if (/^[A-Z0-9]{4}\s[A-Z0-9]{4}$/.test(text)) {
             return text.replace(/\s+/, "-");
           }
+          if (/^[A-Z0-9]{4}\u00a0[A-Z0-9]{4}$/.test(text)) {
+            return text.replace(/\u00a0/, "-");
+          }
         }
         
-        const chars = Array.from(document.querySelectorAll('[data-testid="phone-number-code-char"], [data-ref] span'));
+        const chars = Array.from(document.querySelectorAll('[data-testid="phone-number-code-char"], [data-ref] span, ._akaw span'));
         if (chars.length === 8) {
-          const joined = chars.map(c => c.innerText.trim()).join("");
+          const joined = chars.map(c => c.innerText.trim().toUpperCase()).join("");
           if (/^[A-Z0-9]{8}$/.test(joined)) {
             return joined.substring(0, 4) + "-" + joined.substring(4);
+          }
+        }
+        
+        for (const el of elements) {
+          const text = (el.innerText || "").trim().replace(/[-\s\u00a0]/g, "").toUpperCase();
+          if (text.length === 8 && /^[A-Z0-9]{8}$/.test(text)) {
+            return text.substring(0, 4) + "-" + text.substring(4);
           }
         }
         return null;
