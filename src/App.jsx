@@ -3505,6 +3505,7 @@ function VendedorWhatsapp({ usuarioLogado }) {
   const [modoConexao, setModoConexao] = useState("qr"); // 'qr' ou 'telefone'
   const [telefoneInput, setTelefoneInput] = useState(usuarioLogado.whatsapp || "");
   const [loading, setLoading] = useState(false);
+  const [screenshotTimestamp, setScreenshotTimestamp] = useState(null);
 
   async function carregarStatus() {
     try {
@@ -3514,6 +3515,9 @@ function VendedorWhatsapp({ usuarioLogado }) {
         setStatus(data.status);
         setQrCode(data.qrCode);
         setPhoneCode(data.phoneCode || null);
+        if (data.status !== "disconnected") {
+          setScreenshotTimestamp(Date.now());
+        }
       }
     } catch (e) {
       console.error(e);
@@ -3731,10 +3735,10 @@ function VendedorWhatsapp({ usuarioLogado }) {
         {/* Diagnostic console */}
         <div style={{ marginTop: "30px", width: "100%", borderTop: "1px solid var(--border-color)", paddingTop: "20px" }}>
           <details>
-            <summary style={{ cursor: "pointer", color: "var(--text-secondary)", fontSize: "0.9rem", fontWeight: "600" }}>
+            <summary style={{ cursor: "pointer", color: "var(--text-secondary)", fontSize: "0.9rem", fontWeight: "600" }} onClick={() => setScreenshotTimestamp(Date.now())}>
               🛠️ Ver Logs de Depuração do Servidor
             </summary>
-            <div style={{ marginTop: "15px", background: "#111", padding: "15px", borderRadius: "8px", border: "1px solid #333", maxHeight: "250px", overflowY: "auto", textAlign: "left" }}>
+            <div style={{ marginTop: "15px", background: "#111", padding: "15px", borderRadius: "8px", border: "1px solid #333", maxHeight: "450px", overflowY: "auto", textAlign: "left" }}>
               <button 
                 type="button"
                 className="btn btn-secondary" 
@@ -3747,10 +3751,31 @@ function VendedorWhatsapp({ usuarioLogado }) {
                   } catch (e) {
                     document.getElementById("debug-log-box").innerText = "Erro ao carregar logs: " + e.message;
                   }
+                  setScreenshotTimestamp(Date.now());
                 }}
               >
                 🔄 Atualizar Logs
               </button>
+              
+              {screenshotTimestamp && (
+                <div style={{ marginBottom: "15px", borderBottom: "1px solid #333", paddingBottom: "15px", width: "100%" }}>
+                  <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)", display: "block", marginBottom: "8px" }}>
+                    📷 Captura da Tela do Servidor (Chromium) - Atualiza automaticamente:
+                  </span>
+                  <img 
+                    src={`${API_URL}/whatsapp/debug-screenshot/${usuarioLogado.id}?t=${screenshotTimestamp}`} 
+                    alt="Sem captura de tela disponível no momento" 
+                    style={{ width: "100%", maxHeight: "300px", objectFit: "contain", borderRadius: "6px", border: "1px solid #444", background: "#000", display: "block" }}
+                    onError={(e) => {
+                      e.target.style.display = "none";
+                    }}
+                    onLoad={(e) => {
+                      e.target.style.display = "block";
+                    }}
+                  />
+                </div>
+              )}
+
               <pre id="debug-log-box" style={{ margin: 0, fontSize: "0.8rem", color: "#0f0", fontFamily: "Courier New, monospace", whiteSpace: "pre-wrap" }}>
                 Clique em 'Atualizar Logs' para ver as mensagens do servidor.
               </pre>

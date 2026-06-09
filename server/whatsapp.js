@@ -218,6 +218,61 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                 throw new Error("Não foi possível abrir a tela de entrada de telefone (timeout ao clicar no botão).");
               }
               
+              // Select Brazil (+55) country code
+              logDebug(vendedorId, `Tentando selecionar o país Brasil (+55)...`);
+              try {
+                // Save screenshot of the initial modal
+                await page.screenshot({ path: path.join(sessionDir, "debug-screenshot.png") }).catch(() => {});
+
+                // Find the country selector button
+                const countryBtn = await page.$(
+                  'div[data-testid="country-code-dropdown"], button:has-text("United States"), button:has-text("Estados Unidos"), button:has-text("Change country"), [role="button"]:has-text("United States"), [role="button"]:has-text("Estados Unidos")'
+                );
+                
+                if (countryBtn) {
+                  logDebug(vendedorId, `Botão do seletor de país localizado. Clicando...`);
+                  await countryBtn.click({ force: true }).catch(() => {});
+                  await new Promise(r => setTimeout(r, 1000));
+                  
+                  // Save screenshot of the opened list
+                  await page.screenshot({ path: path.join(sessionDir, "debug-screenshot.png") }).catch(() => {});
+                  
+                  // Look for search input inside the dropdown/popover
+                  const searchInput = await page.$('input[placeholder*="Search"], input[placeholder*="Procurar"], input[placeholder*="Buscar"], input[type="text"]:not([data-testid="phone-number-input"])');
+                  if (searchInput) {
+                    logDebug(vendedorId, `Campo de busca de país localizado. Digitando "Brazil"...`);
+                    await searchInput.focus();
+                    await searchInput.fill("");
+                    await searchInput.type("Brazil", { delay: 100 });
+                    await new Promise(r => setTimeout(r, 1000));
+                    
+                    const optionSelector = 'div[role="option"], div[role="button"]:has-text("Brazil"), div[role="button"]:has-text("Brasil"), span:has-text("Brazil"), span:has-text("Brasil")';
+                    const option = await page.$(optionSelector);
+                    if (option) {
+                      logDebug(vendedorId, `Opção "Brazil/Brasil" localizada. Clicando...`);
+                      await option.click({ force: true }).catch(() => {});
+                    } else {
+                      logDebug(vendedorId, `Opção "Brazil/Brasil" não localizada por seletor. Tentando pressionar Enter...`);
+                      await page.keyboard.press("Enter");
+                    }
+                  } else {
+                    logDebug(vendedorId, `Campo de busca de país não localizado. Procurando "Brazil" diretamente na lista...`);
+                    const optionSelector = 'div[role="option"]:has-text("Brazil"), div[role="option"]:has-text("Brasil"), div:has-text("Brazil"):not(:has(div)), div:has-text("Brasil"):not(:has(div)), span:has-text("Brazil"), span:has-text("Brasil")';
+                    const option = await page.$(optionSelector);
+                    if (option) {
+                      await option.click({ force: true }).catch(() => {});
+                    } else {
+                      logDebug(vendedorId, `Não foi possível encontrar a opção "Brazil" na lista.`);
+                    }
+                  }
+                  await new Promise(r => setTimeout(r, 1000));
+                } else {
+                  logDebug(vendedorId, `Botão de seletor de país não encontrado. Presumindo que já está correto.`);
+                }
+              } catch (countryErr) {
+                logDebug(vendedorId, `Erro ao tentar selecionar o país: ${countryErr.message}`);
+              }
+
               if (phoneInput) {
                 logDebug(vendedorId, `Focando e limpando o campo de telefone...`);
                 await phoneInput.focus();
@@ -249,6 +304,11 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                     }, nextBtn);
                   });
                 }
+                
+                // Save screenshot after clicking "Avançar"
+                await new Promise(r => setTimeout(r, 2000));
+                await page.screenshot({ path: path.join(sessionDir, "debug-screenshot.png") }).catch(() => {});
+                
                 logDebug(vendedorId, `Fluxo de telefone enviado com sucesso.`);
               }
             }
@@ -295,6 +355,20 @@ async function monitorSession(vendedorId, context, page) {
         logDebug(vendedorId, `Página do navegador foi fechada pelo sistema.`);
         session.status = "disconnected";
         break;
+      }
+
+      // Take debug screenshot every 5 attempts (~4 seconds)
+      if (attempts % 5 === 0) {
+        try {
+          const sessionDir = path.resolve(process.env.WHATSAPP_SESSIONS_DIR || "whatsapp-sessions", vendedorId);
+          const debugScreenshotPath = path.join(sessionDir, "debug-screenshot.png");
+          if (!fs.existsSync(sessionDir)) {
+            fs.mkdirSync(sessionDir, { recursive: true });
+          }
+          await page.screenshot({ path: debugScreenshotPath }).catch(() => {});
+        } catch (e) {
+          // ignore
+        }
       }
 
       // Check if logged in

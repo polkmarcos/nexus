@@ -1446,6 +1446,22 @@ app.get("/whatsapp/debug-logs", (req, res) => {
   }
 });
 
+app.get("/whatsapp/debug-screenshot/:vendedorId", (req, res) => {
+  try {
+    const { vendedorId } = req.params;
+    const baseSessionsDir = process.env.WHATSAPP_SESSIONS_DIR || path.resolve("whatsapp-sessions");
+    const screenshotPath = path.resolve(baseSessionsDir, vendedorId, "debug-screenshot.png");
+    
+    if (fs.existsSync(screenshotPath)) {
+      res.sendFile(screenshotPath);
+    } else {
+      res.status(404).send("Nenhum screenshot de depuração disponível.");
+    }
+  } catch (error) {
+    res.status(500).send("Erro ao carregar screenshot: " + error.message);
+  }
+});
+
 app.post("/whatsapp/desconectar/:vendedorId", async (req, res) => {
   try {
     const { vendedorId } = req.params;
