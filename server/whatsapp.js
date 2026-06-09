@@ -224,14 +224,38 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                 // Save screenshot of the initial modal
                 await page.screenshot({ path: path.join(sessionDir, "debug-screenshot.png") }).catch(() => {});
 
-                // Find the country selector button
-                const countryBtn = await page.$(
-                  'div[data-testid="country-code-dropdown"], button:has-text("United States"), button:has-text("Estados Unidos"), button:has-text("Change country"), [role="button"]:has-text("United States"), [role="button"]:has-text("Estados Unidos")'
-                );
+                // Find the country selector button dynamically based on common text patterns or "+1" pattern
+                const countryBtnHandle = await page.evaluateHandle(() => {
+                  const elements = Array.from(document.querySelectorAll('div, span, button, p'));
+                  for (const el of elements) {
+                    const text = (el.innerText || "").trim();
+                    if (
+                      text === "Estados Unidos" || 
+                      text === "United States" || 
+                      text === "Escolha o país" || 
+                      text === "Choose a country" ||
+                      text === "Change country"
+                    ) {
+                      return el;
+                    }
+                  }
+                  // Look for an element displaying "+1" (or similar country code prefix)
+                  for (const el of elements) {
+                    const text = (el.innerText || "").trim();
+                    if (/^\+\d{1,3}$/.test(text)) {
+                      return el;
+                    }
+                  }
+                  return document.querySelector('[data-testid="country-code-dropdown"]');
+                });
+                
+                const countryBtn = countryBtnHandle.asElement();
                 
                 if (countryBtn) {
                   logDebug(vendedorId, `Botão do seletor de país localizado. Clicando...`);
-                  await countryBtn.click({ force: true }).catch(() => {});
+                  await countryBtn.click({ force: true }).catch(async () => {
+                    await page.evaluate(el => el.click(), countryBtn);
+                  });
                   await new Promise(r => setTimeout(r, 1000));
                   
                   // Save screenshot of the opened list
@@ -240,34 +264,47 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                   // Look for search input inside the dropdown/popover
                   const searchInput = await page.$('input[placeholder*="Search"], input[placeholder*="Procurar"], input[placeholder*="Buscar"], input[type="text"]:not([data-testid="phone-number-input"])');
                   if (searchInput) {
-                    logDebug(vendedorId, `Campo de busca de país localizado. Digitando "Brazil"...`);
+                    logDebug(vendedorId, `Campo de busca de país localizado. Digitando "Brasil"...`);
                     await searchInput.focus();
                     await searchInput.fill("");
-                    await searchInput.type("Brazil", { delay: 100 });
+                    await searchInput.type("Brasil", { delay: 100 });
                     await new Promise(r => setTimeout(r, 1000));
                     
-                    const optionSelector = 'div[role="option"], div[role="button"]:has-text("Brazil"), div[role="button"]:has-text("Brasil"), span:has-text("Brazil"), span:has-text("Brasil")';
-                    const option = await page.$(optionSelector);
+                    let optionSelector = 'div[role="option"], div[role="button"]:has-text("Brasil"), div[role="button"]:has-text("Brazil"), span:has-text("Brasil"), span:has-text("Brazil")';
+                    let option = await page.$(optionSelector);
+                    
+                    if (!option) {
+                      logDebug(vendedorId, `Nenhuma opção encontrada para "Brasil". Tentando buscar por "Brazil"...`);
+                      await searchInput.focus();
+                      await page.keyboard.down("Control");
+                      await page.keyboard.press("A");
+                      await page.keyboard.up("Control");
+                      await page.keyboard.press("Backspace");
+                      await searchInput.type("Brazil", { delay: 100 });
+                      await new Promise(r => setTimeout(r, 1000));
+                      option = await page.$(optionSelector);
+                    }
+                    
                     if (option) {
-                      logDebug(vendedorId, `Opção "Brazil/Brasil" localizada. Clicando...`);
+                      logDebug(vendedorId, `Opção "Brasil/Brazil" localizada. Clicando...`);
                       await option.click({ force: true }).catch(() => {});
                     } else {
-                      logDebug(vendedorId, `Opção "Brazil/Brasil" não localizada por seletor. Tentando pressionar Enter...`);
+                      logDebug(vendedorId, `Opção "Brasil/Brazil" não localizada por seletor. Tentando pressionar Enter...`);
                       await page.keyboard.press("Enter");
                     }
                   } else {
-                    logDebug(vendedorId, `Campo de busca de país não localizado. Procurando "Brazil" diretamente na lista...`);
-                    const optionSelector = 'div[role="option"]:has-text("Brazil"), div[role="option"]:has-text("Brasil"), div:has-text("Brazil"):not(:has(div)), div:has-text("Brasil"):not(:has(div)), span:has-text("Brazil"), span:has-text("Brasil")';
+                    logDebug(vendedorId, `Campo de busca de país não localizado. Procurando "Brasil" ou "Brazil" diretamente na lista...`);
+                    const optionSelector = 'div[role="option"]:has-text("Brasil"), div[role="option"]:has-text("Brazil"), div:has-text("Brasil"):not(:has(div)), div:has-text("Brazil"):not(:has(div)), span:has-text("Brasil"), span:has-text("Brazil")';
                     const option = await page.$(optionSelector);
                     if (option) {
                       await option.click({ force: true }).catch(() => {});
                     } else {
-                      logDebug(vendedorId, `Não foi possível encontrar a opção "Brazil" na lista.`);
+                      logDebug(vendedorId, `Não foi possível encontrar a opção na lista.`);
                     }
                   }
                   await new Promise(r => setTimeout(r, 1000));
                 } else {
-                  logDebug(vendedorId, `Botão de seletor de país não encontrado. Presumindo que já está correto.`);
+                  logDebug(vendedorId, `Botão de seletor de país não encontrado.`);
                 }
               } catch (countryErr) {
                 logDebug(vendedorId, `Erro ao tentar selecionar o país: ${countryErr.message}`);
