@@ -2868,6 +2868,29 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
     const limitVal = isTeste ? 10 : (limiteDisparo ? parseInt(limiteDisparo, 10) : null);
 
     try {
+      // Auto-collect leads if active reserved queue is empty and capacity is available
+      const reservadoCount = leads.filter(l => l.status === "reservado").length;
+      if (reservadoCount === 0 && stats.capacidade_hoje > 0) {
+        console.log("Nenhum lead reservado disponível. Coletando novos leads automaticamente...");
+        const resColeta = await fetch(`${API_URL}/vendedores/${usuarioLogado.id}/coletar-leads`, {
+          method: "POST"
+        });
+        const dataColeta = await resColeta.json();
+        
+        if (!resColeta.ok && dataColeta.error && !dataColeta.error.includes("atingiu seu limite")) {
+          setErro(dataColeta.error || "Erro ao coletar novos leads.");
+          return;
+        }
+
+        // Reload leads list and stats after collecting
+        const resLeads = await fetch(`${API_URL}/leads/vendedor/${usuarioLogado.id}`);
+        const dataLeads = await resLeads.json();
+        if (dataLeads.ok) {
+          setLeads(dataLeads.leads);
+        }
+        await carregarStats();
+      }
+
       const res = await fetch(`${API_URL}/whatsapp/disparar/${usuarioLogado.id}`, { 
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2880,8 +2903,12 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
         if (isTeste) {
           setShowTestNotice(true);
         }
+        setIsSending(true);
         // Reload leads list after a short delay
-        setTimeout(carregarLeads, 3000);
+        setTimeout(() => {
+          carregarLeads();
+          carregarStats();
+        }, 3000);
       } else {
         setErro(data.error);
       }

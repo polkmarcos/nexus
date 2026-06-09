@@ -522,11 +522,11 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
         const sendUrl = `https://web.whatsapp.com/send?phone=${phoneClean}&text=${encodeURIComponent(textoPersonalizado)}`;
         await page.goto(sendUrl, { waitUntil: "domcontentloaded" });
 
-        const sendButtonSelector = 'span[data-icon="send"], button[data-testid="compose-btn-send"]';
-        const textboxSelector = 'div[contenteditable="true"]';
+        const sendButtonSelector = '#main span[data-icon="send"], #main button[data-testid="compose-btn-send"], button[data-testid="compose-btn-send"]';
+        const textboxSelector = '#main div[contenteditable="true"], div[data-testid="conversation-text-input"], div[data-testid="compose-input"]';
         
         // Wait for either the send button, the textbox, or the "Invalid Phone Number" dialog
-        const action = await Promise.race([
+        let action = await Promise.race([
           page.waitForSelector(sendButtonSelector, { timeout: 30000 }).then(() => "send_btn"),
           page.waitForSelector(textboxSelector, { timeout: 30000 }).then(() => "textbox"),
           page.waitForSelector('div[role="dialog"]', { timeout: 30000 }).then(() => "dialog")
@@ -539,7 +539,7 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
           }).catch(() => "");
           console.log(`[DEBUG] Diálogo detectado: "${dialogText.replace(/\n/g, ' ')}"`);
           
-          if (/iniciando|carregando|starting|loading/i.test(dialogText)) {
+          if (/iniciando|carregando|conectando|starting|loading|connecting/i.test(dialogText)) {
             console.log(`[DEBUG] Diálogo de carregamento detectado. Aguardando a conversa carregar de fato...`);
             
             // Wait up to 25 seconds for the loading dialog to disappear and the chat elements to load
@@ -550,7 +550,7 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
                 const el = document.querySelector('div[role="dialog"]');
                 if (!el) return false;
                 const text = el.innerText || "";
-                return !/iniciando|carregando|starting|loading/i.test(text);
+                return !/iniciando|carregando|conectando|starting|loading|connecting/i.test(text);
               }, { timeout: 25000 }).then(() => "dialog")
             ]).catch(() => "timeout");
             
@@ -583,6 +583,41 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
                   .run(new Date().toISOString(), lead.id);
             resultados.push({ id: lead.id, empresa: lead.empresa, status: "Vácuo", erro: "Número inválido" });
             continue;
+          } else {
+            console.log(`[DEBUG] Diálogo não-sistema detectado. Tentando fechar...`);
+            const buttons = await page.$$('div[role="dialog"] button, div[role="dialog"] [role="button"]');
+            let closed = false;
+            for (const btn of buttons) {
+              const btnText = await page.evaluate(el => el.innerText || "", btn);
+              if (/ok|entendi|fechar|close|avançar|next/i.test(btnText)) {
+                console.log(`[DEBUG] Clicando no botão "${btnText}" para fechar diálogo.`);
+                await btn.click().catch(() => {});
+                closed = true;
+                break;
+              }
+            }
+            if (!closed && buttons.length > 0) {
+              console.log(`[DEBUG] Nenhum botão de fechar correspondente encontrado. Clicando no primeiro botão do diálogo.`);
+              await buttons[0].click().catch(() => {});
+            }
+            
+            // Wait a moment for it to close
+            await new Promise(r => setTimeout(r, 2000));
+
+            // Recheck if elements are now available, otherwise re-navigate to sendUrl
+            let checkSendBtn = await page.$(sendButtonSelector);
+            let checkTextbox = await page.$(textboxSelector);
+            if (!checkSendBtn && !checkTextbox) {
+              console.log(`[DEBUG] Elementos de envio ainda ausentes após fechar diálogo. Re-navegando para a URL de envio...`);
+              await page.goto(sendUrl, { waitUntil: "domcontentloaded" });
+              
+              // Wait again for elements
+              action = await Promise.race([
+                page.waitForSelector(sendButtonSelector, { timeout: 20000 }).then(() => "send_btn"),
+                page.waitForSelector(textboxSelector, { timeout: 20000 }).then(() => "textbox"),
+                page.waitForSelector('div[role="dialog"]', { timeout: 20000 }).then(() => "dialog")
+              ]).catch(() => "timeout");
+            }
           }
         }
 
@@ -593,11 +628,22 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
         // Small pause to let elements settle
         await new Promise(r => setTimeout(r, 2000));
 
+        const textbox = await page.$(textboxSelector);
+        if (textbox) {
+          // Check if there is already text inside the textbox (hydrated from sendUrl)
+          const currentText = await page.evaluate(el => el.innerText || "", textbox);
+          if (!currentText.trim()) {
+            console.log(`[DEBUG] Campo de texto vazio. Digitando a mensagem manualmente...`);
+            await textbox.focus();
+            await page.keyboard.type(textoPersonalizado, { delay: 50 });
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+
         const sendBtn = await page.$(sendButtonSelector);
         if (sendBtn) {
           await sendBtn.click();
         } else {
-          const textbox = await page.$(textboxSelector);
           if (textbox) {
             await textbox.focus();
             await page.keyboard.press("Enter");
