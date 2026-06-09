@@ -184,17 +184,40 @@ export async function conectarWhatsapp(vendedorId, telefone) {
           if (elementFound === "link_button") {
             const linkBtn = await page.$(linkSelector);
             if (linkBtn) {
-              logDebug(vendedorId, `Botão de link por telefone localizado. Clicando...`);
-              await linkBtn.click({ force: true }).catch(async () => {
-                await page.evaluate(el => {
-                  el.scrollIntoView({ block: 'center' });
-                  el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                }, linkBtn);
-              });
+              logDebug(vendedorId, `Botão de link por telefone localizado.`);
               
               const inputSelector = 'input[data-testid="phone-number-input"], input[type="text"], input[placeholder]';
-              logDebug(vendedorId, `Aguardando campo de entrada do telefone...`);
-              const phoneInput = await page.waitForSelector(inputSelector, { timeout: 30000 });
+              let phoneInput = null;
+              
+              // Wait 2 seconds for JS event listeners to hydrate
+              await new Promise(r => setTimeout(r, 2000));
+              
+              for (let clickAttempt = 1; clickAttempt <= 4; clickAttempt++) {
+                logDebug(vendedorId, `Clicando no botão de link por telefone (Tentativa ${clickAttempt}/4)...`);
+                
+                await linkBtn.click({ force: true }).catch(async () => {
+                  await page.evaluate(el => {
+                    el.scrollIntoView({ block: 'center' });
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                  }, linkBtn);
+                });
+                
+                // Wait up to 3 seconds to see if the input modal opens
+                try {
+                  phoneInput = await page.waitForSelector(inputSelector, { timeout: 3000 });
+                  if (phoneInput) {
+                    logDebug(vendedorId, `Campo de entrada de telefone apareceu com sucesso!`);
+                    break;
+                  }
+                } catch (timeoutErr) {
+                  logDebug(vendedorId, `Campo de telefone não apareceu após tentativa ${clickAttempt}. Retentando...`);
+                }
+              }
+              
+              if (!phoneInput) {
+                throw new Error("Não foi possível abrir a tela de entrada de telefone (timeout ao clicar no botão).");
+              }
+              
               if (phoneInput) {
                 logDebug(vendedorId, `Focando e limpando o campo de telefone...`);
                 await phoneInput.focus();
