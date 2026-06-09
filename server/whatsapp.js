@@ -218,6 +218,27 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                 throw new Error("Não foi possível abrir a tela de entrada de telefone (timeout ao clicar no botão).");
               }
               
+              // Dump all elements inside the pairing container to logs for direct inspection
+              try {
+                const dump = await page.evaluate(() => {
+                  const elements = Array.from(document.querySelectorAll('input, button, [role="button"], select'));
+                  return elements.map(el => {
+                    return {
+                      tagName: el.tagName,
+                      type: el.getAttribute('type'),
+                      dataTestId: el.getAttribute('data-testid'),
+                      placeholder: el.getAttribute('placeholder'),
+                      value: el.value || '',
+                      text: el.innerText || '',
+                      outerHTML: el.outerHTML.substring(0, 250)
+                    };
+                  });
+                });
+                logDebug(vendedorId, `DEBUG DOM FORMULÁRIO PAREAMENTO: ${JSON.stringify(dump, null, 2)}`);
+              } catch (dumpErr) {
+                logDebug(vendedorId, `Erro ao fazer dump dos elementos: ${dumpErr.message}`);
+              }
+
               // Select Brazil (+55) country code
               logDebug(vendedorId, `Tentando selecionar o país Brasil (+55)...`);
               try {
@@ -260,6 +281,28 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                   
                   // Save screenshot of the opened list
                   await page.screenshot({ path: path.join(sessionDir, "debug-screenshot.png") }).catch(() => {});
+
+                  // Dump elements when the country dropdown is opened to check the search input and options
+                  try {
+                    const dumpList = await page.evaluate(() => {
+                      const elements = Array.from(document.querySelectorAll('input, button, [role="button"], select, [role="option"]'));
+                      return elements.map(el => {
+                        return {
+                          tagName: el.tagName,
+                          type: el.getAttribute('type'),
+                          dataTestId: el.getAttribute('data-testid'),
+                          placeholder: el.getAttribute('placeholder'),
+                          value: el.value || '',
+                          text: (el.innerText || '').trim(),
+                          role: el.getAttribute('role'),
+                          outerHTML: el.outerHTML.substring(0, 150)
+                        };
+                      });
+                    });
+                    logDebug(vendedorId, `DEBUG DOM SELETOR ABERTO: ${JSON.stringify(dumpList, null, 2)}`);
+                  } catch (dumpErr) {
+                    logDebug(vendedorId, `Erro ao fazer dump do seletor aberto: ${dumpErr.message}`);
+                  }
                   
                   // Look for search input inside the dropdown/popover
                   const searchInput = await page.$('input[placeholder*="Search"], input[placeholder*="Procurar"], input[placeholder*="Buscar"], input[type="text"]:not([data-testid="phone-number-input"])');
