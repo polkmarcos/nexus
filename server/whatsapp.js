@@ -247,7 +247,7 @@ export async function conectarWhatsapp(vendedorId, telefone) {
 
                 // Find the country selector button dynamically based on common text patterns or "+1" pattern
                 const countryBtnHandle = await page.evaluateHandle(() => {
-                  const elements = Array.from(document.querySelectorAll('div, span, button, p'));
+                  const elements = Array.from(document.querySelectorAll('div, span, button, p, [data-testid="phone-number-country-selector"]'));
                   for (const el of elements) {
                     const text = (el.innerText || "").trim();
                     if (
@@ -267,17 +267,20 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                       return el;
                     }
                   }
-                  return document.querySelector('[data-testid="country-code-dropdown"]');
+                  return document.querySelector('[data-testid="phone-number-country-selector"], [data-testid="country-code-dropdown"]');
                 });
                 
                 const countryBtn = countryBtnHandle.asElement();
                 
                 if (countryBtn) {
-                  logDebug(vendedorId, `Botão do seletor de país localizado. Clicando...`);
-                  await countryBtn.click({ force: true }).catch(async () => {
-                    await page.evaluate(el => el.click(), countryBtn);
-                  });
-                  await new Promise(r => setTimeout(r, 1000));
+                  logDebug(vendedorId, `Botão do seletor de país localizado. Clicando com eventos completos...`);
+                  await countryBtn.click({ force: true }).catch(() => {});
+                  await page.evaluate(el => {
+                    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                  }, countryBtn);
+                  await new Promise(r => setTimeout(r, 1500));
                   
                   // Save screenshot of the opened list
                   await page.screenshot({ path: path.join(sessionDir, "debug-screenshot.png") }).catch(() => {});
@@ -304,8 +307,8 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                     logDebug(vendedorId, `Erro ao fazer dump do seletor aberto: ${dumpErr.message}`);
                   }
                   
-                  // Look for search input inside the dropdown/popover
-                  const searchInput = await page.$('input[placeholder*="Search"], input[placeholder*="Procurar"], input[placeholder*="Buscar"], input[type="text"]:not([data-testid="phone-number-input"])');
+                  // Look for search input inside the dropdown/popover or any text input
+                  const searchInput = await page.$('input:not([data-testid="phone-number-input"])');
                   if (searchInput) {
                     logDebug(vendedorId, `Campo de busca de país localizado. Digitando "Brasil"...`);
                     await searchInput.focus();
@@ -313,11 +316,30 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                     await searchInput.type("Brasil", { delay: 100 });
                     await new Promise(r => setTimeout(r, 1000));
                     
-                    let optionSelector = 'div[role="option"], div[role="button"]:has-text("Brasil"), div[role="button"]:has-text("Brazil"), span:has-text("Brasil"), span:has-text("Brazil")';
-                    let option = await page.$(optionSelector);
+                    const optionClicked = await page.evaluate(() => {
+                      const divs = Array.from(document.querySelectorAll('div, span, p, li, [role="option"]'));
+                      for (const el of divs) {
+                        const text = (el.innerText || "").trim();
+                        if (text === "Brasil" || text === "Brazil") {
+                          el.scrollIntoView({ block: "center" });
+                          el.click();
+                          return true;
+                        }
+                      }
+                      for (const el of divs) {
+                        const text = (el.innerText || "").trim();
+                        if (text.includes("Brasil") || text.includes("Brazil")) {
+                          el.scrollIntoView({ block: "center" });
+                          el.click();
+                          return true;
+                        }
+                      }
+                      return false;
+                    });
+                    logDebug(vendedorId, `Tentativa 1 de clique na opção por texto: ${optionClicked}`);
                     
-                    if (!option) {
-                      logDebug(vendedorId, `Nenhuma opção encontrada para "Brasil". Tentando buscar por "Brazil"...`);
+                    if (!optionClicked) {
+                      logDebug(vendedorId, `Tentando buscar por "Brazil" em inglês...`);
                       await searchInput.focus();
                       await page.keyboard.down("Control");
                       await page.keyboard.press("A");
@@ -325,25 +347,36 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                       await page.keyboard.press("Backspace");
                       await searchInput.type("Brazil", { delay: 100 });
                       await new Promise(r => setTimeout(r, 1000));
-                      option = await page.$(optionSelector);
-                    }
-                    
-                    if (option) {
-                      logDebug(vendedorId, `Opção "Brasil/Brazil" localizada. Clicando...`);
-                      await option.click({ force: true }).catch(() => {});
-                    } else {
-                      logDebug(vendedorId, `Opção "Brasil/Brazil" não localizada por seletor. Tentando pressionar Enter...`);
-                      await page.keyboard.press("Enter");
+                      
+                      const optionClicked2 = await page.evaluate(() => {
+                        const divs = Array.from(document.querySelectorAll('div, span, p, li, [role="option"]'));
+                        for (const el of divs) {
+                          const text = (el.innerText || "").trim();
+                          if (text === "Brasil" || text === "Brazil") {
+                            el.scrollIntoView({ block: "center" });
+                            el.click();
+                            return true;
+                          }
+                        }
+                        return false;
+                      });
+                      logDebug(vendedorId, `Tentativa 2 de clique na opção por texto: ${optionClicked2}`);
                     }
                   } else {
-                    logDebug(vendedorId, `Campo de busca de país não localizado. Procurando "Brasil" ou "Brazil" diretamente na lista...`);
-                    const optionSelector = 'div[role="option"]:has-text("Brasil"), div[role="option"]:has-text("Brazil"), div:has-text("Brasil"):not(:has(div)), div:has-text("Brazil"):not(:has(div)), span:has-text("Brasil"), span:has-text("Brazil")';
-                    const option = await page.$(optionSelector);
-                    if (option) {
-                      await option.click({ force: true }).catch(() => {});
-                    } else {
-                      logDebug(vendedorId, `Não foi possível encontrar a opção na lista.`);
-                    }
+                    logDebug(vendedorId, `Campo de busca não encontrado. Buscando "Brasil"/"Brazil" diretamente na lista...`);
+                    const optionClickedDirect = await page.evaluate(() => {
+                      const divs = Array.from(document.querySelectorAll('div, span, p, li, [role="option"]'));
+                      for (const el of divs) {
+                        const text = (el.innerText || "").trim();
+                        if (text === "Brasil" || text === "Brazil") {
+                          el.scrollIntoView({ block: "center" });
+                          el.click();
+                          return true;
+                        }
+                      }
+                      return false;
+                    });
+                    logDebug(vendedorId, `Clique direto na lista: ${optionClickedDirect}`);
                   }
                   await new Promise(r => setTimeout(r, 1000));
                 } else {
@@ -364,12 +397,34 @@ export async function conectarWhatsapp(vendedorId, telefone) {
                 await page.keyboard.press("Backspace");
                 
                 let cleanPhone = telefone.replace(/\D/g, "");
-                if (cleanPhone.startsWith("55") && cleanPhone.length >= 12) {
-                  cleanPhone = cleanPhone.substring(2);
+                
+                // Read current text from selector to check if we successfully changed it to Brazil (+55)
+                const currentCountryText = await page.evaluate(() => {
+                  const el = document.querySelector('[data-testid="phone-number-country-selector"]');
+                  return el ? (el.innerText || "").trim() : "";
+                });
+                
+                logDebug(vendedorId, `País detectado no seletor após configuração: "${currentCountryText}"`);
+                
+                let phoneToType = "";
+                // If country is Brazil/Brasil, we type only the number (without 55)
+                if (currentCountryText.includes("Brasil") || currentCountryText.includes("Brazil") || currentCountryText.includes("55")) {
+                  if (cleanPhone.startsWith("55") && cleanPhone.length >= 12) {
+                    phoneToType = cleanPhone.substring(2);
+                  } else {
+                    phoneToType = cleanPhone;
+                  }
+                } else {
+                  // Fallback: If dropdown selection failed (still showing US or Iran), we type +55 directly to trigger automated country swap
+                  if (cleanPhone.startsWith("55") && cleanPhone.length >= 12) {
+                    phoneToType = "+" + cleanPhone;
+                  } else {
+                    phoneToType = "+55" + cleanPhone;
+                  }
                 }
                 
-                logDebug(vendedorId, `Digitando o número de telefone (DDI+DDD): ${cleanPhone}`);
-                await page.keyboard.type(cleanPhone, { delay: 100 });
+                logDebug(vendedorId, `Digitando o número de telefone: ${phoneToType}`);
+                await page.keyboard.type(phoneToType, { delay: 100 });
                 await new Promise(r => setTimeout(r, 500));
                 await page.keyboard.press("Enter");
                 
