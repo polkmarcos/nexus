@@ -977,6 +977,17 @@ app.post("/capturar-leads", (req, res) => {
               break;
             }
 
+            // Check history for this city and niche
+            try {
+              const alreadyScraped = db.prepare("SELECT 1 FROM historico_capturas_cidades WHERE cidade = ? AND nicho = ?").get(cidade, nicho);
+              if (alreadyScraped) {
+                console.log(`[Scraper Nacional] Pulando ${cidade} para o nicho ${nicho} (já capturado anteriormente).`);
+                continue;
+              }
+            } catch (historyErr) {
+              console.error("[Scraper Nacional] Erro ao verificar historico_capturas_cidades:", historyErr.message);
+            }
+
             current.progresso = `Buscando em ${cidade} (${i + 1}/${cidadesLista.length})`;
             const cityQuery = `${query} em ${cidade}`;
             
@@ -993,6 +1004,14 @@ app.post("/capturar-leads", (req, res) => {
                 }
               };
               await scrapeGoogleMaps(cityQuery, nicho, Number(limite), isCancelled, onLeadSaved);
+              
+              // Register success in history
+              try {
+                db.prepare("INSERT OR REPLACE INTO historico_capturas_cidades (cidade, nicho, capturado_em) VALUES (?, ?, ?)").run(cidade, nicho, nowIso());
+                console.log(`[Scraper Nacional] Cidade ${cidade} registrada como concluida para o nicho ${nicho}.`);
+              } catch (saveHistoryErr) {
+                console.error("[Scraper Nacional] Erro ao registrar cidade no historico:", saveHistoryErr.message);
+              }
             } catch (err) {
               console.error(`[Scraper Cidades] Erro em ${cidade}:`, err.message);
               const isNetworkError = err.message.includes("net::ERR_INTERNET_DISCONNECTED") || 

@@ -95,6 +95,13 @@ db.exec(`
     chave TEXT PRIMARY KEY,
     valor TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS historico_capturas_cidades (
+    cidade TEXT NOT NULL,
+    nicho TEXT NOT NULL,
+    capturado_em TEXT NOT NULL,
+    PRIMARY KEY (cidade, nicho)
+  );
 `);
 
 // Safe migrations for existing databases
