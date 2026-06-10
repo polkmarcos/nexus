@@ -1732,6 +1732,69 @@ function AdminLeads() {
     }
   }
 
+  function exportarLeadsCSV() {
+    if (leadsFiltrados.length === 0) {
+      alert("Não há leads para exportar.");
+      return;
+    }
+
+    const headers = [
+      "ID",
+      "Empresa",
+      "Telefone",
+      "Nicho",
+      "Cidade",
+      "Estado",
+      "Status",
+      "Vendedor Responsável",
+      "Origem",
+      "Termo de Busca (Query)",
+      "Endereço",
+      "Site",
+      "Última Mensagem",
+      "Observações",
+      "Criado Em"
+    ];
+
+    const escapeCsv = (val) => {
+      if (val === null || val === undefined) return '""';
+      const stringified = String(val);
+      return `"${stringified.replace(/"/g, '""')}"`;
+    };
+
+    const rows = leadsFiltrados.map(l => [
+      l.id,
+      l.empresa,
+      l.telefone,
+      l.nicho,
+      l.cidade,
+      l.estado,
+      l.status,
+      l.vendedor_nome || "Não atribuído",
+      l.origem,
+      l.query_origem,
+      l.endereco,
+      l.site,
+      l.ultima_mensagem,
+      l.observacoes,
+      l.criado_em
+    ]);
+
+    const csvContent = [
+      headers.map(escapeCsv).join(";"),
+      ...rows.map(row => row.map(escapeCsv).join(";"))
+    ].join("\n");
+
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `leads_exportados_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   // Get unique niches and statuses for dropdown filters
   const nichosUnicos = [...new Set(leads.map(l => l.nicho))];
   const statusUnicos = [...new Set(leads.map(l => l.status))];
@@ -1772,6 +1835,9 @@ function AdminLeads() {
         <div style={{ display: "flex", gap: "10px" }}>
           <button className="btn btn-primary" onClick={distribuirLeads} disabled={distribuindo}>
             🚀 {distribuindo ? "Distribuindo..." : "Distribuir Leads para Vendedores"}
+          </button>
+          <button className="btn btn-secondary" onClick={exportarLeadsCSV}>
+            📥 Exportar Leads (CSV)
           </button>
           <button 
             className="btn btn-danger" 
