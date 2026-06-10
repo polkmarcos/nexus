@@ -250,4 +250,38 @@ try {
   console.error("Erro ao migrar status 'Distribuído':", e.message);
 }
 
+// Retrofit history of scraped cities from existing leads
+try {
+  const count = db.prepare("SELECT COUNT(*) as count FROM historico_capturas_cidades").get().count;
+  if (count === 0) {
+    const leads = db.prepare(`
+      SELECT DISTINCT cidade, estado, nicho 
+      FROM leads 
+      WHERE cidade IS NOT NULL 
+        AND cidade != 'Não Informada' 
+        AND cidade != 'Não Informado'
+        AND estado IS NOT NULL
+        AND estado != 'Não Informado'
+    `).all();
+
+    if (leads.length > 0) {
+      console.log(`[Database Migration] Retroalimentando historico_capturas_cidades com ${leads.length} registros de leads existentes...`);
+      const now = new Date().toISOString();
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO historico_capturas_cidades (cidade, nicho, capturado_em)
+        VALUES (?, ?, ?)
+      `);
+      db.transaction(() => {
+        for (const l of leads) {
+          const cidadeFormatada = `${l.cidade} - ${l.estado}`;
+          insert.run(cidadeFormatada, l.nicho, now);
+        }
+      })();
+      console.log("[Database Migration] Retroalimentação de cidades concluída com sucesso!");
+    }
+  }
+} catch (e) {
+  console.error("Erro ao retroalimentar historico_capturas_cidades:", e.message);
+}
+
 export default db;
