@@ -1200,6 +1200,77 @@ app.delete("/leads/limpar", (req, res) => {
   }
 });
 
+app.post("/leads/importar", (req, res) => {
+  try {
+    const { leads } = req.body;
+    if (!Array.isArray(leads)) {
+      return res.status(400).json({ ok: false, error: "A lista de leads deve ser enviada em formato de array." });
+    }
+
+    let importadosCount = 0;
+    let duplicadosCount = 0;
+    const now = nowIso();
+
+    const checkDuplicado = db.prepare(`
+      SELECT id FROM leads 
+      WHERE telefone = ? OR (empresa = ? AND endereco = ?)
+    `);
+
+    const insertLead = db.prepare(`
+      INSERT INTO leads (
+        id, empresa, telefone, cidade, estado, nicho, status, vendedor_id, 
+        origem, query_origem, endereco, site, ultima_mensagem, observacoes, criado_em, atualizado_em
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, 'disponivel', NULL,
+        'Importação CSV', 'Upload manual', ?, ?, NULL, '', ?, ?
+      )
+    `);
+
+    db.transaction(() => {
+      for (const l of leads) {
+        const empresa = String(l.empresa || "").trim();
+        let telefone = String(l.telefone || "").trim().replace(/\D/g, "");
+
+        if (!empresa || !telefone) {
+          continue;
+        }
+
+        // Normalizar telefone (prefixo 55 se BR de 10/11 dígitos)
+        if (telefone.length === 10 || telefone.length === 11) {
+          telefone = "55" + telefone;
+        }
+
+        const cidade = String(l.cidade || "Não Informada").trim();
+        const estado = String(l.estado || "Não Informado").trim();
+        const nicho = String(l.nicho || "Geral").trim();
+        const site = String(l.site || "").trim();
+        const endereco = String(l.endereco || "Não Informado").trim();
+
+        // Verificar duplicados no banco
+        const dup = checkDuplicado.get(telefone, empresa, endereco);
+        if (dup) {
+          duplicadosCount++;
+          continue;
+        }
+
+        const id = randomUUID();
+        insertLead.run(
+          id, empresa, telefone, cidade, estado, nicho, 
+          endereco, site, now, now
+        );
+        importadosCount++;
+      }
+    })();
+
+    res.json({ 
+      ok: true, 
+      message: `Importação concluída. ${importadosCount} novos leads adicionados, ${duplicadosCount} duplicados ignorados.` 
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
 app.get("/leads/vendedor/:vendedorId", (req, res) => {
   try {
     const { vendedorId } = req.params;

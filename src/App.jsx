@@ -1570,6 +1570,135 @@ function AdminLeads() {
   const [distribuindo, setDistribuindo] = useState(false);
   const [mensagemStatus, setMensagemStatus] = useState("");
 
+  // Estados para Importação de CSV
+  const [csvFile, setCsvFile] = useState(null);
+  const [csvLeads, setCsvLeads] = useState([]);
+  const [nichoPadrao, setNichoPadrao] = useState("Geral");
+  const [csvErro, setCsvErro] = useState("");
+  const [csvSucesso, setCsvSucesso] = useState("");
+  const [importandoCsv, setImportandoCsv] = useState(false);
+
+  function handleCsvChange(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setCsvFile(file);
+    setCsvErro("");
+    setCsvSucesso("");
+    setCsvLeads([]);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target.result;
+        const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+        if (lines.length <= 1) {
+          setCsvErro("O arquivo CSV está vazio ou contém apenas o cabeçalho.");
+          return;
+        }
+
+        // Detectar separador (, ou ;)
+        const headerLine = lines[0];
+        const separator = headerLine.includes(";") ? ";" : ",";
+
+        // Parsear cabeçalhos
+        const headers = headerLine.split(separator).map(h => h.trim().toLowerCase());
+        
+        // Mapear índices das colunas
+        const idxEmpresa = headers.findIndex(h => h.includes("empresa") || h.includes("nome") || h.includes("name") || h.includes("estabelecimento") || h.includes("lead"));
+        const idxTelefone = headers.findIndex(h => h.includes("telefone") || h.includes("phone") || h.includes("celular") || h.includes("tel"));
+        const idxCidade = headers.findIndex(h => h.includes("cidade") || h.includes("city") || h.includes("municipio"));
+        const idxEstado = headers.findIndex(h => h.includes("estado") || h.includes("state") || h.includes("uf"));
+        const idxNicho = headers.findIndex(h => h.includes("nicho") || h.includes("niche") || h.includes("categoria"));
+        const idxSite = headers.findIndex(h => h.includes("site") || h.includes("website") || h.includes("link"));
+        const idxEndereco = headers.findIndex(h => h.includes("endereco") || h.includes("address") || h.includes("logradouro") || h.includes("rua"));
+
+        if (idxEmpresa === -1 || idxTelefone === -1) {
+          setCsvErro("Colunas obrigatórias 'empresa' (ou 'nome') e 'telefone' não identificadas no cabeçalho.");
+          return;
+        }
+
+        const parsedLeads = [];
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i];
+          const cols = line.split(separator).map(c => {
+            let val = c.trim();
+            if (val.startsWith('"') && val.endsWith('"')) {
+              val = val.substring(1, val.length - 1).trim();
+            }
+            return val;
+          });
+
+          if (cols.length <= Math.max(idxEmpresa, idxTelefone)) {
+            continue;
+          }
+
+          const empresaVal = cols[idxEmpresa];
+          const telefoneVal = cols[idxTelefone];
+
+          if (!empresaVal || !telefoneVal) continue;
+
+          parsedLeads.push({
+            empresa: empresaVal,
+            telefone: telefoneVal,
+            cidade: idxCidade !== -1 ? cols[idxCidade] : "",
+            estado: idxEstado !== -1 ? cols[idxEstado] : "",
+            nicho: idxNicho !== -1 && cols[idxNicho] ? cols[idxNicho] : "",
+            site: idxSite !== -1 ? cols[idxSite] : "",
+            endereco: idxEndereco !== -1 ? cols[idxEndereco] : ""
+          });
+        }
+
+        if (parsedLeads.length === 0) {
+          setCsvErro("Nenhum lead válido foi encontrado no CSV.");
+        } else {
+          setCsvLeads(parsedLeads);
+        }
+      } catch (err) {
+        setCsvErro("Erro ao processar arquivo: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  async function enviarCsv() {
+    if (csvLeads.length === 0 || importandoCsv) return;
+    setImportandoCsv(true);
+    setCsvErro("");
+    setCsvSucesso("");
+
+    // Preencher nicho padrão se estiver vazio
+    const leadsFinal = csvLeads.map(l => ({
+      ...l,
+      nicho: l.nicho || nichoPadrao
+    }));
+
+    try {
+      const res = await fetch(`${API_URL}/leads/importar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leads: leadsFinal })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setCsvSucesso(data.message);
+        setCsvLeads([]);
+        setCsvFile(null);
+        
+        // Resetar campo de arquivo
+        const fileInput = document.querySelector('input[type="file"]');
+        if (fileInput) fileInput.value = "";
+        
+        carregarLeads();
+      } else {
+        setCsvErro(data.error || "Erro ao importar leads.");
+      }
+    } catch (err) {
+      setCsvErro("Falha na comunicação com o servidor.");
+    } finally {
+      setImportandoCsv(false);
+    }
+  }
+
   async function carregarLeads() {
     try {
       const res = await fetch(`${API_URL}/leads`);
@@ -1667,6 +1796,93 @@ function AdminLeads() {
             🗑️ Limpar Carteira
           </button>
         </div>
+      </div>
+
+      {/* Card de Importação de CSV */}
+      <div className="card" style={{ marginTop: "20px" }}>
+        <h2>📥 Importar Leads via CSV</h2>
+        <p className="subtitle" style={{ fontSize: "0.85rem", marginTop: "-5px", marginBottom: "15px" }}>
+          Suba arquivos no formato <code style={{ color: "var(--primary)" }}>.csv</code> para importar seus leads. 
+          O cabeçalho deve conter colunas como <code style={{ color: "var(--primary)" }}>empresa</code> e <code style={{ color: "var(--primary)" }}>telefone</code> (obrigatórias), 
+          além de <code style={{ color: "var(--primary)" }}>cidade, estado, nicho, site, endereco</code> (opcionais).
+        </p>
+
+        {csvErro && <div className="alert alert-error" style={{ padding: "8px 12px", fontSize: "0.85rem", marginBottom: "15px" }}>{csvErro}</div>}
+        {csvSucesso && <div className="alert alert-success" style={{ padding: "8px 12px", fontSize: "0.85rem", marginBottom: "15px" }}>{csvSucesso}</div>}
+
+        <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div className="form-group" style={{ flex: 1, minWidth: "250px" }}>
+            <label>Selecione o arquivo CSV</label>
+            <input 
+              type="file" 
+              accept=".csv" 
+              onChange={handleCsvChange}
+              style={{
+                border: "1px dashed var(--border-color)",
+                padding: "8px",
+                borderRadius: "8px",
+                background: "var(--bg-tertiary)",
+                width: "100%",
+                cursor: "pointer"
+              }}
+            />
+          </div>
+
+          <div className="form-group" style={{ width: "200px" }}>
+            <label>Nicho Padrão (Fallback)</label>
+            <input 
+              type="text" 
+              value={nichoPadrao} 
+              onChange={e => setNichoPadrao(e.target.value)} 
+              placeholder="Ex: Geral"
+            />
+          </div>
+
+          <div>
+            <button 
+              className="btn btn-primary" 
+              onClick={enviarCsv} 
+              disabled={csvLeads.length === 0 || importandoCsv}
+              style={{ padding: "12px 20px" }}
+              type="button"
+            >
+              {importandoCsv ? "Importando..." : `Confirmar Importação (${csvLeads.length} Leads)`}
+            </button>
+          </div>
+        </div>
+
+        {csvLeads.length > 0 && (
+          <div style={{ marginTop: "15px", padding: "12px", border: "1px solid var(--border-color)", borderRadius: "8px", background: "var(--bg-tertiary)" }}>
+            <h4 style={{ margin: "0 0 10px 0", color: "var(--primary)", fontSize: "0.9rem" }}>🔍 Pré-visualização dos Leads:</h4>
+            <div style={{ maxHeight: "150px", overflowY: "auto", fontSize: "0.85rem" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
+                    <th style={{ textAlign: "left", padding: "4px" }}>Empresa</th>
+                    <th style={{ textAlign: "left", padding: "4px" }}>Telefone</th>
+                    <th style={{ textAlign: "left", padding: "4px" }}>Nicho</th>
+                    <th style={{ textAlign: "left", padding: "4px" }}>Cidade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {csvLeads.slice(0, 5).map((l, index) => (
+                    <tr key={index} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <td style={{ padding: "4px" }}>{l.empresa}</td>
+                      <td style={{ padding: "4px" }}>{l.telefone}</td>
+                      <td style={{ padding: "4px" }}>{l.nicho || nichoPadrao}</td>
+                      <td style={{ padding: "4px" }}>{l.cidade || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {csvLeads.length > 5 && (
+                <div style={{ textAlign: "center", color: "var(--text-tertiary)", marginTop: "6px", fontSize: "0.8rem" }}>
+                  ... e mais {csvLeads.length - 5} leads.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="card">
