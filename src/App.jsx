@@ -1722,26 +1722,35 @@ function AdminLeads() {
 }
 
 // 5. ADMIN MESSAGING TEMPLATE
+// 5. ADMIN MESSAGING TEMPLATE
 function AdminMensagens() {
+  const [abaAtiva, setAbaAtiva] = useState("prospeccao"); // "prospeccao" ou "chat-rapido"
   const [mensagens, setMensagens] = useState([]);
   const [form, setForm] = useState({ nome: "", texto: "" });
   const [editingId, setEditingId] = useState(null);
   const [erro, setErro] = useState("");
   const [sucesso, setSucesso] = useState("");
 
-  async function carregarMensagens() {
+  async function carregarDados() {
     try {
-      const res = await fetch(`${API_URL}/mensagens`);
+      const endpoint = abaAtiva === "prospeccao" ? "/mensagens" : "/respostas-rapidas";
+      const res = await fetch(`${API_URL}${endpoint}`);
       const data = await res.json();
-      if (data.ok) setMensagens(data.mensagens);
+      if (data.ok) {
+        if (abaAtiva === "prospeccao") {
+          setMensagens(data.mensagens || []);
+        } else {
+          setMensagens(data.templates || []);
+        }
+      }
     } catch (e) {
       console.error(e);
     }
   }
 
   useEffect(() => {
-    carregarMensagens();
-  }, []);
+    carregarDados();
+  }, [abaAtiva]);
 
   async function salvarMensagem(e) {
     e.preventDefault();
@@ -1749,27 +1758,33 @@ function AdminMensagens() {
     setSucesso("");
 
     if (!form.nome || !form.texto) {
-      setErro("Nome e Texto do modelo são obrigatórios.");
+      setErro("Título/Nome e Texto são obrigatórios.");
       return;
     }
 
     try {
-      const url = editingId ? `${API_URL}/mensagens/${editingId}` : `${API_URL}/mensagens`;
+      const isProsp = abaAtiva === "prospeccao";
+      const endpoint = isProsp ? "/mensagens" : "/respostas-rapidas";
+      const url = editingId ? `${API_URL}${endpoint}/${editingId}` : `${API_URL}${endpoint}`;
       const method = editingId ? "PUT" : "POST";
       
+      const body = isProsp 
+        ? { nome: form.nome, texto: form.texto }
+        : { titulo: form.nome, texto: form.texto };
+
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form)
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (res.ok) {
-        setSucesso(editingId ? "Modelo de mensagem atualizado com sucesso!" : "Modelo de mensagem salvo com sucesso!");
+        setSucesso(editingId ? "Atualizado com sucesso!" : "Criado com sucesso!");
         setForm({ nome: "", texto: "" });
         setEditingId(null);
-        carregarMensagens();
+        carregarDados();
       } else {
-        setErro(data.error);
+        setErro(data.error || "Erro ao salvar.");
       }
     } catch (e) {
       setErro("Erro de comunicação com o servidor.");
@@ -1780,7 +1795,7 @@ function AdminMensagens() {
     try {
       const res = await fetch(`${API_URL}/mensagens/${id}/ativar`, { method: "PUT" });
       if (res.ok) {
-        carregarMensagens();
+        carregarDados();
       }
     } catch (e) {
       console.error(e);
@@ -1789,7 +1804,10 @@ function AdminMensagens() {
 
   async function iniciarEdicao(m) {
     setEditingId(m.id);
-    setForm({ nome: m.nome, texto: m.texto });
+    setForm({ 
+      nome: abaAtiva === "prospeccao" ? m.nome : m.titulo, 
+      texto: m.texto 
+    });
     setErro("");
     setSucesso("");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1803,49 +1821,113 @@ function AdminMensagens() {
   }
 
   async function excluirMensagem(id) {
-    if (!window.confirm("Tem certeza que deseja excluir este modelo de mensagem?")) {
+    if (!window.confirm("Tem certeza que deseja excluir este modelo?")) {
       return;
     }
 
     setErro("");
     setSucesso("");
     try {
-      const res = await fetch(`${API_URL}/mensagens/${id}`, { method: "DELETE" });
+      const endpoint = abaAtiva === "prospeccao" ? "/mensagens" : "/respostas-rapidas";
+      const res = await fetch(`${API_URL}${endpoint}/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (res.ok) {
-        setSucesso("Modelo de mensagem excluído com sucesso!");
+        setSucesso("Excluído com sucesso!");
         if (editingId === id) {
           cancelarEdicao();
         }
-        carregarMensagens();
+        carregarDados();
       } else {
-        setErro(data.error);
+        setErro(data.error || "Erro ao excluir.");
       }
     } catch (e) {
-      setErro("Erro ao excluir modelo de mensagem.");
+      setErro("Erro de comunicação.");
     }
   }
+
+  const isProsp = abaAtiva === "prospeccao";
 
   return (
     <section>
       <h1>Modelos de Mensagem</h1>
-      <p className="subtitle">Configure o modelo de mensagem que os vendedores dispararão automaticamente via WhatsApp Web.</p>
+      <p className="subtitle">
+        {isProsp 
+          ? "Configure o modelo de mensagem que os vendedores dispararão automaticamente via WhatsApp Web."
+          : "Configure as respostas rápidas pré-salvas que os vendedores usarão no chat de duas vias."}
+      </p>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
+        <button
+          className={`btn ${isProsp ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => {
+            setAbaAtiva("prospeccao");
+            cancelarEdicao();
+          }}
+          type="button"
+        >
+          📢 Prospecção Automática
+        </button>
+        <button
+          className={`btn ${!isProsp ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => {
+            setAbaAtiva("chat-rapido");
+            cancelarEdicao();
+          }}
+          type="button"
+        >
+          💬 Respostas Rápidas (Chat)
+        </button>
+      </div>
 
       {erro && <div className="alert alert-error">{erro}</div>}
       {sucesso && <div className="alert alert-success">{sucesso}</div>}
 
       <div className="card">
-        <h2>{editingId ? "Editar Modelo de Mensagem" : "Criar Novo Modelo"}</h2>
+        <h2>
+          {editingId 
+            ? (isProsp ? "Editar Modelo de Mensagem" : "Editar Resposta Rápida")
+            : (isProsp ? "Criar Novo Modelo" : "Criar Nova Resposta Rápida")}
+        </h2>
         <form onSubmit={salvarMensagem}>
           <div className="form-group" style={{ marginBottom: "15px" }}>
-            <label>Nome do Modelo (Identificação Interna)</label>
-            <input name="nome" value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} placeholder="Ex: Primeiro Contato - Padarias" required />
+            <label>
+              {isProsp 
+                ? "Nome do Modelo (Identificação Interna)" 
+                : "Título do Atalho (Ex: Preço, Como Funciona, Pix)"}
+            </label>
+            <input 
+              name="nome" 
+              value={form.nome} 
+              onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} 
+              placeholder={isProsp ? "Ex: Primeiro Contato - Padarias" : "Ex: Link de Pagamento"} 
+              required 
+            />
           </div>
           <div className="form-group" style={{ marginBottom: "15px" }}>
-            <label>Texto da Mensagem (Suporta variáveis)</label>
-            <textarea name="texto" value={form.texto} onChange={e => setForm(f => ({ ...f, texto: e.target.value }))} rows="6" placeholder="Olá {saudacao}! Vi a empresa {empresa} no nicho {nicho} e..." required />
+            <label>
+              {isProsp 
+                ? "Texto da Mensagem (Suporta variáveis)" 
+                : "Texto da Resposta (Suporta variáveis)"}
+            </label>
+            <textarea 
+              name="texto" 
+              value={form.texto} 
+              onChange={e => setForm(f => ({ ...f, texto: e.target.value }))} 
+              rows="6" 
+              placeholder={isProsp ? "Olá {saudacao}! Vi a empresa {empresa} no..." : "Excelente! Compre no link seguro: {link_kiwify}"} 
+              required 
+            />
             <small style={{ color: "var(--text-secondary)", marginTop: "4px" }}>
-              Variáveis dinâmicas suportadas: <code style={{ color: "var(--primary)" }}>{"{saudacao}"}</code> (Bom dia/Boa tarde/Boa noite), <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code> (Nome do lead), <code style={{ color: "var(--primary)" }}>{"{nicho}"}</code> (Nicho comercial).
+              {isProsp ? (
+                <>
+                  Variáveis dinâmicas suportadas: <code style={{ color: "var(--primary)" }}>{"{saudacao}"}</code> (Bom dia/Boa tarde/Boa noite), <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code> (Nome do lead), <code style={{ color: "var(--primary)" }}>{"{nicho}"}</code> (Nicho comercial).
+                </>
+              ) : (
+                <>
+                  Variáveis dinâmicas suportadas: <code style={{ color: "var(--primary)" }}>{"{link_kiwify}"}</code> (Link de afiliado do vendedor), <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code> (Nome da empresa do lead).
+                </>
+              )}
             </small>
           </div>
           <div style={{ display: "flex", gap: "10px" }}>
@@ -1862,29 +1944,34 @@ function AdminMensagens() {
       </div>
 
       <div className="card">
-        <h2>Modelos Salvos</h2>
-        <p className="subtitle" style={{ fontSize: "0.85rem", marginTop: "-5px", marginBottom: "15px" }}>
-          Ative múltiplos modelos simultaneamente para rotacionar as mensagens de modo aleatório nos disparos automáticos.
-        </p>
+        <h2>{isProsp ? "Modelos Salvos" : "Respostas Rápidas Salvas"}</h2>
+        {isProsp && (
+          <p className="subtitle" style={{ fontSize: "0.85rem", marginTop: "-5px", marginBottom: "15px" }}>
+            Ative múltiplos modelos simultaneamente para rotacionar as mensagens de modo aleatório nos disparos automáticos.
+          </p>
+        )}
         {mensagens.length === 0 ? (
           <p>Nenhum modelo cadastrado.</p>
         ) : (
           mensagens.map(m => (
-            <div className={`msg-item ${m.ativa === 1 ? "active" : ""}`} key={m.id}>
+            <div className={`msg-item ${isProsp && m.ativa === 1 ? "active" : ""}`} key={m.id}>
               <div style={{ flex: 1, paddingRight: "15px" }}>
                 <h3 style={{ margin: "0 0 8px 0", color: "var(--text-primary)" }}>
-                  {m.nome} {m.ativa === 1 && <span className="badge badge-prevenda" style={{ marginLeft: "10px" }}>Ativo em Rotação</span>}
+                  {isProsp ? m.nome : m.titulo} 
+                  {isProsp && m.ativa === 1 && <span className="badge badge-prevenda" style={{ marginLeft: "10px" }}>Ativo em Rotação</span>}
                 </h3>
                 <p style={{ whiteSpace: "pre-wrap", color: "var(--text-secondary)", fontSize: "0.95rem", margin: 0 }}>{m.texto}</p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignSelf: "center" }}>
-                <button 
-                  className={`btn ${m.ativa === 1 ? "btn-secondary" : "btn-primary"}`} 
-                  style={{ padding: "6px 12px", fontSize: "0.85rem", whiteSpace: "nowrap" }} 
-                  onClick={() => ativarMensagem(m.id)}
-                >
-                  {m.ativa === 1 ? "🔴 Desativar" : "🟢 Ativar"}
-                </button>
+                {isProsp && (
+                  <button 
+                    className={`btn ${m.ativa === 1 ? "btn-secondary" : "btn-primary"}`} 
+                    style={{ padding: "6px 12px", fontSize: "0.85rem", whiteSpace: "nowrap" }} 
+                    onClick={() => ativarMensagem(m.id)}
+                  >
+                    {m.ativa === 1 ? "🔴 Desativar" : "🟢 Ativar"}
+                  </button>
+                )}
                 <button 
                   className="btn btn-secondary" 
                   style={{ padding: "6px 12px", fontSize: "0.85rem", whiteSpace: "nowrap", border: "1px solid var(--border-color)" }} 
@@ -2787,6 +2874,9 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
   const [modalLead, setModalLead] = useState(null);
   const [obsPreVenda, setObsPreVenda] = useState("");
 
+  // Chat Drawer State
+  const [chatLead, setChatLead] = useState(null);
+
 
 
   // Dispatch sending state
@@ -3472,6 +3562,20 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
                           </button>
                         )}
 
+                        <button 
+                          className="btn btn-primary" 
+                          style={{ 
+                            padding: "6px 12px", 
+                            fontSize: "0.85rem",
+                            background: "linear-gradient(135deg, #fbbf24 0%, #d97706 100%)",
+                            border: "none",
+                            color: "white"
+                          }} 
+                          onClick={() => setChatLead(l)}
+                        >
+                          💬 Conversar
+                        </button>
+
 
                       </div>
                     </td>
@@ -3513,6 +3617,14 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
           </div>
         </div>
       )}
+
+      {/* Chat Drawer */}
+      <ChatDrawer 
+        lead={chatLead} 
+        vendedorId={usuarioLogado.id} 
+        onClose={() => setChatLead(null)} 
+        onMessageSent={carregarLeads}
+      />
 
 
 
@@ -4247,5 +4359,217 @@ function LoginAdmin({ loginAdminSucesso, setPagina }) {
         </button>
       </form>
     </div>
+  );
+}
+
+function ChatDrawer({ lead, vendedorId, onClose, onMessageSent }) {
+  const [mensagens, setMensagens] = useState([]);
+  const [texto, setTexto] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState("");
+  const [templates, setTemplates] = useState([]);
+  const messagesContainerRef = useRef(null);
+
+  const isOpen = !!lead;
+
+  useEffect(() => {
+    if (!lead) {
+      setTemplates([]);
+      return;
+    }
+    
+    async function carregarTemplates() {
+      try {
+        const res = await fetch(`${API_URL}/respostas-rapidas?vendedorId=${vendedorId}&leadId=${lead.id}`);
+        const data = await res.json();
+        if (data.ok) {
+          setTemplates(data.templates || []);
+        }
+      } catch (err) {
+        console.error("Erro ao carregar templates rápidos:", err);
+      }
+    }
+    
+    carregarTemplates();
+  }, [lead, vendedorId]);
+
+  async function carregarMensagens(showSilent = true, triggerSync = false) {
+    if (!lead) return;
+    try {
+      const url = triggerSync 
+        ? `${API_URL}/leads/${lead.id}/mensagens?sync=true`
+        : `${API_URL}/leads/${lead.id}/mensagens`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.ok) {
+        setMensagens(data.mensagens || []);
+      }
+    } catch (e) {
+      console.error("Erro ao carregar mensagens:", e);
+      if (!showSilent) {
+        setErro("Não foi possível carregar as mensagens.");
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!lead) {
+      setMensagens([]);
+      return;
+    }
+
+    carregarMensagens(false, true);
+
+    const interval = setInterval(() => {
+      carregarMensagens(true, false);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [lead]);
+
+  useEffect(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
+  }, [mensagens, isOpen]);
+
+  if (!isOpen) return null;
+
+  async function enviar(e) {
+    e.preventDefault();
+    if (!texto.trim() || enviando) return;
+
+    const textoMsg = texto.trim();
+    setTexto("");
+    setErro("");
+    setEnviando(true);
+
+    const tempId = "temp_" + Date.now();
+    const tempMsg = {
+      id: tempId,
+      lead_id: lead.id,
+      vendedor_id: vendedorId,
+      direcao: "out",
+      texto: textoMsg,
+      timestamp: new Date().toISOString()
+    };
+    setMensagens(prev => [...prev, tempMsg]);
+
+    try {
+      const res = await fetch(`${API_URL}/leads/${lead.id}/mensagens/enviar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ texto: textoMsg, vendedorId })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErro(data.error || "Erro ao enviar mensagem.");
+        setMensagens(prev => prev.filter(m => m.id !== tempId));
+      } else {
+        carregarMensagens(true);
+        if (onMessageSent) onMessageSent();
+      }
+    } catch (err) {
+      setErro("Falha na conexão com o servidor.");
+      setMensagens(prev => prev.filter(m => m.id !== tempId));
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  function formatarHora(isoString) {
+    if (!isoString) return "";
+    try {
+      const d = new Date(isoString);
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch (e) {
+      return "";
+    }
+  }
+
+  return (
+    <>
+      <div className="chat-drawer-backdrop" onClick={onClose} />
+      <div className={`chat-drawer ${isOpen ? "open" : ""}`}>
+        <div className="chat-drawer-header">
+          <div>
+            <h3>{lead.empresa}</h3>
+            <div className="chat-drawer-header-subtitle">
+              <span>{lead.telefone}</span>
+              <span style={{ margin: "0 6px" }}>•</span>
+              <span className={`badge badge-${lead.status.toLowerCase().replace(/[^a-z]/g, "")}`} style={{ padding: "2px 6px", fontSize: "0.7rem" }}>
+                {lead.status}
+              </span>
+            </div>
+          </div>
+          <button className="chat-drawer-close" onClick={onClose} title="Fechar Chat">
+            &times;
+          </button>
+        </div>
+
+        {erro && (
+          <div className="alert alert-error" style={{ margin: "10px 16px", padding: "8px 12px", fontSize: "0.8rem" }}>
+            {erro}
+          </div>
+        )}
+
+        <div className="chat-drawer-messages" ref={messagesContainerRef}>
+          {mensagens.length === 0 ? (
+            <div className="chat-no-messages">
+              <div className="chat-no-messages-icon">💬</div>
+              <p>Nenhuma mensagem trocada ainda.</p>
+              <small style={{ color: "var(--text-tertiary)" }}>
+                Envie uma mensagem abaixo para iniciar a conversa!
+              </small>
+            </div>
+          ) : (
+            mensagens.map((msg) => (
+              <div key={msg.id} className={`chat-bubble-container ${msg.direcao}`}>
+                <div className={`chat-bubble ${msg.direcao}`}>
+                  {msg.texto}
+                </div>
+                <div className="chat-bubble-meta">
+                  {formatarHora(msg.timestamp)}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {templates.length > 0 && (
+          <div className="chat-drawer-templates-container">
+            <div className="chat-drawer-templates-label">Respostas Rápidas</div>
+            <div className="chat-drawer-templates">
+              {templates.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className="chat-template-btn"
+                  onClick={() => setTexto(t.texto)}
+                  title={t.texto}
+                >
+                  {t.titulo}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <form className="chat-drawer-footer" onSubmit={enviar}>
+          <input
+            type="text"
+            className="chat-drawer-input"
+            placeholder="Digite uma mensagem..."
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            disabled={enviando}
+            autoFocus
+          />
+          <button type="submit" className="chat-drawer-send-btn" disabled={!texto.trim() || enviando}>
+            {enviando ? "..." : "Enviar"}
+          </button>
+        </form>
+      </div>
+    </>
   );
 }

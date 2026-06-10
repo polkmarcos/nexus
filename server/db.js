@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import { randomUUID } from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -89,7 +90,12 @@ db.exec(`
     FOREIGN KEY (vendedor_id) REFERENCES vendedores(id)
   );
 
-
+  CREATE TABLE IF NOT EXISTS respostas_rapidas (
+    id TEXT PRIMARY KEY,
+    titulo TEXT NOT NULL,
+    texto TEXT NOT NULL,
+    criado_em TEXT NOT NULL
+  );
 
   CREATE TABLE IF NOT EXISTS configuracoes (
     chave TEXT PRIMARY KEY,
@@ -180,6 +186,49 @@ try {
   `).run();
 } catch (e) {
   console.error("Erro ao inserir configs padrão:", e.message);
+}
+
+// Seed default quick-reply templates (respostas_rapidas)
+try {
+  const count = db.prepare("SELECT COUNT(*) as count FROM respostas_rapidas").get().count;
+  if (count === 0) {
+    const templates = [
+      {
+        titulo: "Link de Pagamento",
+        texto: "Excelente! Para adquirir o seu site e colocar seu delivery no ar com a demonstração personalizada, acesse o link de pagamento seguro: {link_kiwify}"
+      },
+      {
+        titulo: "Quanto Custa",
+        texto: "A criação e configuração do seu site próprio completo, otimizado e personalizado para delivery custa apenas R$ 150,00 pagamento único (sem mensalidades)."
+      },
+      {
+        titulo: "Como Funciona",
+        texto: "O pagamento é realizado de forma segura via Pix ou Cartão de Crédito através da nossa plataforma parceira. Assim que aprovado, nosso time configura tudo e seu site fica online em até 24 horas."
+      },
+      {
+        titulo: "Benefícios do Site",
+        texto: "Tendo seu site próprio otimizado, você não paga taxas abusivas para apps de delivery, recebe os pedidos organizados no seu WhatsApp e passa muito mais profissionalismo para os seus clientes!"
+      },
+      {
+        titulo: "Demonstração Pronta",
+        texto: "Fiz um rascunho de demonstração de como o seu site pode ficar, totalmente adaptado para celulares. Gostaria de dar uma olhada rápida?"
+      }
+    ];
+    const now = new Date().toISOString();
+    const insert = db.prepare(`
+      INSERT INTO respostas_rapidas (id, titulo, texto, criado_em)
+      VALUES (?, ?, ?, ?)
+    `);
+    
+    db.transaction(() => {
+      for (const t of templates) {
+        insert.run(randomUUID(), t.titulo, t.texto, now);
+      }
+    })();
+    console.log("Templates de respostas rápidas inseridos com sucesso!");
+  }
+} catch (e) {
+  console.error("Erro ao inserir respostas rápidas padrão:", e.message);
 }
 
 // Migrate legacy lead statuses

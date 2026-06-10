@@ -330,132 +330,176 @@ async function monitorSession(vendedorId, context, page) {
   try {
     let attempts = 0;
     const maxAttempts = 300; // ~4 minutes total monitoring with 800ms steps
+    let lastScanTime = 0;
     
-    while (attempts < maxAttempts) {
+    while (true) {
       if (page.isClosed()) {
         logDebug(vendedorId, `Página do navegador foi fechada pelo sistema.`);
         session.status = "disconnected";
         break;
       }
 
-      // Take debug screenshot every 5 attempts (~4 seconds)
-      if (attempts % 5 === 0) {
-        try {
-          const sessionDir = path.resolve(process.env.WHATSAPP_SESSIONS_DIR || "whatsapp-sessions", vendedorId);
-          const debugScreenshotPath = path.join(sessionDir, "debug-screenshot.png");
-          if (!fs.existsSync(sessionDir)) {
-            fs.mkdirSync(sessionDir, { recursive: true });
+      // Check if logged in
+      let isLoggedIn = null;
+      try {
+        isLoggedIn = await page.$('[data-testid="chat-list"], #pane-side, [data-testid="menu-bar-menu"], [data-testid="chatlist-search-input-search"], [data-testid="default-user-icon"], [data-testid="intro-text"]');
+      } catch (err) {
+        logDebug(vendedorId, `Aviso no monitor (contexto destruído/navegação em curso): ${err.message}`);
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      
+      if (isLoggedIn) {
+        if (session.status !== "connected") {
+          session.status = "connected";
+          session.qrCode = null;
+          session.phoneCode = null;
+          logDebug(vendedorId, `WhatsApp conectado com SUCESSO!`);
+          
+          // Update database info
+          db.prepare("UPDATE vendedores SET ativo = 1 WHERE id = ?").run(vendedorId);
+        }
+        
+        // Scan for unread messages if connected, idle, and 12 seconds have passed since last scan
+        const now = Date.now();
+        if (!session.isSending && (now - lastScanTime > 12000)) {
+          lastScanTime = now;
+          try {
+            await scanUnreadMessages(vendedorId, page);
+          } catch (scanErr) {
+            console.error(`[Chat Monitor] Erro ao escanear mensagens não lidas:`, scanErr.message);
           }
-          await page.screenshot({ path: debugScreenshotPath }).catch(() => {});
-        } catch (e) {
-          // ignore
+        }
+      } else {
+        // If not logged in and not connected/syncing, check for codes
+        if (session.status !== "connected" && session.status !== "syncing") {
+          // Check if syncing/loading conversations after scanning
+          const isSyncing = await page.$('[data-testid="startup-progress"], [role="progressbar"], .progress, div:has-text("Carregando"), div:has-text("Loading")');
+          if (isSyncing) {
+            if (session.status !== "syncing") {
+              logDebug(vendedorId, `WhatsApp está sincronizando conversas...`);
+            }
+            session.status = "syncing";
+            session.qrCode = null;
+            session.phoneCode = null;
+          }
+
+          // Check if click-to-retry or generic reload buttons are there
+          const retryBtn = await page.$('button._ak45, button[data-testid="popup-controls-ok"]');
+          if (retryBtn) {
+            logDebug(vendedorId, `Botão de erro do popup/recarregar detectado. Clicando...`);
+            await retryBtn.click().catch(() => {});
+          }
+
+          // Auto-refresh expired QR codes
+          const qrRefreshBtn = await page.$('[data-testid="qrcode"] button, [data-testid="qrcode"] [role="button"], button:has-text("Clique para recarregar"), button:has-text("Click to reload"), span[data-icon="refresh"]');
+          if (qrRefreshBtn) {
+            logDebug(vendedorId, `QR code expirado detectado. Clicando para recarregar...`);
+            await qrRefreshBtn.click().catch(() => {});
+          }
+
+          // Check for phone pairing code
+          const phoneCode = await page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('div, span, button, p'));
+            for (const el of elements) {
+              const text = (el.innerText || "").trim().toUpperCase();
+              if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(text)) {
+                return text;
+              }
+              if (/^[A-Z0-9]{4}\s[A-Z0-9]{4}$/.test(text)) {
+                return text.replace(/\s+/, "-");
+              }
+              if (/^[A-Z0-9]{4}\u00a0[A-Z0-9]{4}$/.test(text)) {
+                return text.replace(/\u00a0/, "-");
+              }
+            }
+            
+            const chars = Array.from(document.querySelectorAll('[data-testid="phone-number-code-char"], [data-ref] span, ._akaw span'));
+            if (chars.length === 8) {
+              const joined = chars.map(c => c.innerText.trim().toUpperCase()).join("");
+              if (/^[A-Z0-9]{8}$/.test(joined)) {
+                return joined.substring(0, 4) + "-" + joined.substring(4);
+              }
+            }
+            
+            for (const el of elements) {
+              const text = (el.innerText || "").trim().replace(/[-\s\u00a0]/g, "").toUpperCase();
+              if (text.length === 8 && /^[A-Z0-9]{8}$/.test(text)) {
+                return text.substring(0, 4) + "-" + text.substring(4);
+              }
+            }
+            return null;
+          });
+
+          if (phoneCode) {
+            if (session.phoneCode !== phoneCode) {
+              logDebug(vendedorId, `Código de pareamento por telefone obtido: ${phoneCode}`);
+            }
+            session.phoneCode = phoneCode;
+            if (session.status !== "syncing") {
+              session.status = "connecting";
+            }
+            
+            const screenshotBuffer = await page.screenshot().catch(() => null);
+            if (screenshotBuffer) {
+              session.qrCode = screenshotBuffer.toString("base64");
+            }
+          } else {
+            session.phoneCode = null;
+            
+            const canvas = await page.$('canvas');
+            if (canvas) {
+              if (session.status !== "syncing" && session.status !== "connecting") {
+                logDebug(vendedorId, `Canvas do QR Code detectado na página. Status definido para connecting.`);
+              }
+              if (session.status !== "syncing") {
+                session.status = "connecting";
+              }
+              const qrBuffer = await canvas.screenshot().catch(() => null);
+              if (qrBuffer) {
+                session.qrCode = qrBuffer.toString("base64");
+              }
+            }
+          }
+        } else if (session.status === "connected") {
+          // We were connected, but now isLoggedIn is false.
+          // If we are currently sending or navigating, this is normal/temporary.
+          if (session.isSending) {
+            // Skip checking connection loss during active send/nav operations
+          } else {
+            // Check if the QR code canvas or link button is actually visible on the page
+            const hasLoginScreen = await page.$('canvas, [data-testid="qrcode"], [data-testid="link-device-phone-number-button"], [role="button"]:has-text("Link with phone number"), [role="button"]:has-text("Conectar com")').catch(() => null);
+            if (hasLoginScreen) {
+              logDebug(vendedorId, `Tela de login detectada. Conexão do WhatsApp perdida.`);
+              session.status = "disconnected";
+              break;
+            } else {
+              // No login screen visible. This is a temporary load, sync, or transition.
+              // We do not disconnect.
+              logDebug(vendedorId, `isLoggedIn falso, mas tela de login não detectada (carregando/sincronizando). Mantendo conexão.`);
+            }
+          }
         }
       }
 
-      // Check if logged in
-      const isLoggedIn = await page.$('[data-testid="chat-list"], #pane-side, [data-testid="menu-bar-menu"], [data-testid="chatlist-search-input-search"], [data-testid="default-user-icon"], [data-testid="intro-text"]');
-      if (isLoggedIn) {
-        session.status = "connected";
-        session.qrCode = null;
-        session.phoneCode = null;
-        logDebug(vendedorId, `WhatsApp conectado com SUCESSO!`);
-        
-        // Update database info
-        db.prepare("UPDATE vendedores SET ativo = 1 WHERE id = ?").run(vendedorId);
+      // Check timeout for connection (4 minutes)
+      if (session.status !== "connected" && attempts > maxAttempts) {
+        logDebug(vendedorId, `Tempo limite de conexão excedido (4 minutos).`);
+        session.status = "disconnected";
         break;
       }
 
-      // Check if syncing/loading conversations after scanning
-      const isSyncing = await page.$('[data-testid="startup-progress"], [role="progressbar"], .progress, div:has-text("Carregando"), div:has-text("Loading")');
-      if (isSyncing) {
-        if (session.status !== "syncing") {
-          logDebug(vendedorId, `WhatsApp está sincronizando conversas...`);
-        }
-        session.status = "syncing";
-        session.qrCode = null;
-        session.phoneCode = null;
-      }
-
-      // Check if click-to-retry or generic reload buttons are there
-      const retryBtn = await page.$('button._ak45, button[data-testid="popup-controls-ok"]');
-      if (retryBtn) {
-        logDebug(vendedorId, `Botão de erro do popup/recarregar detectado. Clicando...`);
-        await retryBtn.click().catch(() => {});
-      }
-
-      // Auto-refresh expired QR codes
-      const qrRefreshBtn = await page.$('[data-testid="qrcode"] button, [data-testid="qrcode"] [role="button"], button:has-text("Clique para recarregar"), button:has-text("Click to reload"), span[data-icon="refresh"]');
-      if (qrRefreshBtn) {
-        logDebug(vendedorId, `QR code expirado detectado. Clicando para recarregar...`);
-        await qrRefreshBtn.click().catch(() => {});
-      }
-
-      // Check for phone pairing code
-      const phoneCode = await page.evaluate(() => {
-        const elements = Array.from(document.querySelectorAll('div, span, button, p'));
-        for (const el of elements) {
-          const text = (el.innerText || "").trim().toUpperCase();
-          if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(text)) {
-            return text;
-          }
-          if (/^[A-Z0-9]{4}\s[A-Z0-9]{4}$/.test(text)) {
-            return text.replace(/\s+/, "-");
-          }
-          if (/^[A-Z0-9]{4}\u00a0[A-Z0-9]{4}$/.test(text)) {
-            return text.replace(/\u00a0/, "-");
-          }
-        }
-        
-        const chars = Array.from(document.querySelectorAll('[data-testid="phone-number-code-char"], [data-ref] span, ._akaw span'));
-        if (chars.length === 8) {
-          const joined = chars.map(c => c.innerText.trim().toUpperCase()).join("");
-          if (/^[A-Z0-9]{8}$/.test(joined)) {
-            return joined.substring(0, 4) + "-" + joined.substring(4);
-          }
-        }
-        
-        for (const el of elements) {
-          const text = (el.innerText || "").trim().replace(/[-\s\u00a0]/g, "").toUpperCase();
-          if (text.length === 8 && /^[A-Z0-9]{8}$/.test(text)) {
-            return text.substring(0, 4) + "-" + text.substring(4);
-          }
-        }
-        return null;
-      });
-
-      if (phoneCode) {
-        if (session.phoneCode !== phoneCode) {
-          logDebug(vendedorId, `Código de pareamento por telefone obtido: ${phoneCode}`);
-        }
-        session.phoneCode = phoneCode;
-        if (session.status !== "syncing") {
-          session.status = "connecting";
-        }
-        
-        const screenshotBuffer = await page.screenshot().catch(() => null);
-        if (screenshotBuffer) {
-          session.qrCode = screenshotBuffer.toString("base64");
-        }
-      } else {
-        session.phoneCode = null;
-        
-        const canvas = await page.$('canvas');
-        if (canvas) {
-          if (session.status !== "syncing" && session.status !== "connecting") {
-            logDebug(vendedorId, `Canvas do QR Code detectado na página. Status definido para connecting.`);
-          }
-          if (session.status !== "syncing") {
-            session.status = "connecting";
-          }
-          const qrBuffer = await canvas.screenshot().catch(() => null);
-          if (qrBuffer) {
-            session.qrCode = qrBuffer.toString("base64");
-          }
-        }
+      // Take debug screenshot every 10 attempts
+      if (attempts % 10 === 0) {
+        try {
+          const sessionDir = path.resolve(process.env.WHATSAPP_SESSIONS_DIR || "whatsapp-sessions", vendedorId);
+          const debugScreenshotPath = path.join(sessionDir, "debug-screenshot.png");
+          await page.screenshot({ path: debugScreenshotPath }).catch(() => {});
+        } catch (e) {}
       }
 
       attempts++;
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 1000));
     }
 
     if (session.status !== "connected") {
@@ -470,6 +514,138 @@ async function monitorSession(vendedorId, context, page) {
     await context.close().catch(() => {});
     sessions.delete(vendedorId);
   }
+}
+
+/**
+ * Scans the WhatsApp Web sidebar for unread chats and reads their messages.
+ */
+async function scanUnreadMessages(vendedorId, page) {
+  const session = sessions.get(vendedorId);
+  if (!session || session.isSending) return;
+
+  session.isSending = true;
+  try {
+    const unreadChats = await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('div[role="row"]'));
+    const unreads = [];
+    for (const row of rows) {
+      const unreadBadge = row.querySelector('span[aria-label*="unread"], span[aria-label*="não lida"], span[aria-label*="mensagem"]');
+      if (unreadBadge) {
+        const titleEl = row.querySelector('span[title], [data-testid="chat-title"]');
+        const title = titleEl ? (titleEl.getAttribute('title') || titleEl.innerText) : '';
+        unreads.push({ title });
+      }
+    }
+    return unreads;
+  }).catch(() => []);
+
+  if (unreadChats.length === 0) return;
+
+  const textboxSelector = '#main div[contenteditable="true"], div[data-testid="conversation-text-input"], div[data-testid="compose-input"]';
+
+  for (const chat of unreadChats) {
+    console.log(`[Chat Monitor] Lendo mensagens não lidas de: "${chat.title}"`);
+
+    // Click row with this title
+    const chatRowSelector = `div[role="row"]:has(span[title="${chat.title}"]), div[role="row"]:has([data-testid="chat-title"]:has-text("${chat.title}"))`;
+    const rowEl = await page.$(chatRowSelector).catch(() => null);
+    if (rowEl) {
+      await rowEl.click().catch(() => {});
+      await new Promise(r => setTimeout(r, 2000)); // Wait for messages to load
+
+      let phone = chat.title.replace(/\D/g, '');
+      const isNumeric = phone.length >= 10 && /^\d+$/.test(phone);
+
+      if (!isNumeric) {
+        // Saved contact name, open Contact Info drawer to extract number
+        const headerEl = await page.$('#main header, div[data-testid="conversation-header"]').catch(() => null);
+        if (headerEl) {
+          await headerEl.click().catch(() => {});
+          await new Promise(r => setTimeout(r, 2000));
+
+          const contactInfoText = await page.evaluate(() => {
+            const drawer = document.querySelector('div[data-testid="contact-info-drawer"], div[role="region"]');
+            return drawer ? drawer.innerText : "";
+          }).catch(() => "");
+
+          const phoneMatch = contactInfoText.match(/\+55\s?\(?\d{2}\)?\s?\d{4,5}-?\d{4}|\+55\s?\d{2}\s?\d{9}|\+55\d{10,11}/);
+          if (phoneMatch) {
+            phone = phoneMatch[0].replace(/\D/g, '');
+          } else {
+            const generalPhoneMatch = contactInfoText.match(/\+\d{1,4}[ \d()-]+/);
+            if (generalPhoneMatch) {
+              phone = generalPhoneMatch[0].replace(/\D/g, '');
+            }
+          }
+
+          // Close Contact Info drawer by pressing Escape
+          await page.keyboard.press("Escape").catch(() => {});
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+
+      if (phone.length >= 10) {
+        // Query leads assigned to this seller
+        const leads = db.prepare("SELECT * FROM leads WHERE vendedor_id = ?").all(vendedorId);
+        const matchedLead = leads.find(l => {
+          const cleanDb = l.telefone.replace(/\D/g, '');
+          return cleanDb === phone || cleanDb.endsWith(phone) || phone.endsWith(cleanDb);
+        });
+
+        if (matchedLead) {
+          // Extract last 5 messages from `#main`
+          const chatMsgs = await page.evaluate(() => {
+            const bubbles = Array.from(document.querySelectorAll('#main div[data-testid="msg-container"], #main div.message-in, #main div.message-out'));
+            const lastBubbles = bubbles.slice(-5);
+            return lastBubbles.map(b => {
+              const isOut = b.classList.contains('message-out') || !!b.querySelector('.message-out') || b.innerHTML.includes('message-out');
+              const textEl = b.querySelector('span.selectable-text, span.copyable-text');
+              const text = textEl ? textEl.innerText : '';
+              return {
+                direcao: isOut ? 'out' : 'in',
+                texto: text
+              };
+            }).filter(m => m.texto.trim() !== '');
+          }).catch(() => []);
+
+          let newMessages = 0;
+          for (const msg of chatMsgs) {
+            const exists = db.prepare(`
+              SELECT 1 FROM mensagens_chat
+              WHERE lead_id = ? AND direcao = ? AND texto = ?
+            `).get(matchedLead.id, msg.direcao, msg.texto);
+
+            if (!exists) {
+              const idMsg = 'wa_' + Math.random().toString(36).substring(2, 11);
+              const now = new Date().toISOString();
+              db.prepare(`
+                INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+              `).run(idMsg, matchedLead.id, vendedorId, msg.direcao, msg.texto, now);
+              newMessages++;
+
+              if (msg.direcao === 'in') {
+                db.prepare(`
+                  UPDATE leads
+                  SET status = 'Conversando', atualizado_em = ?
+                  WHERE id = ?
+                `).run(now, matchedLead.id);
+              }
+            }
+          }
+
+          if (newMessages > 0) {
+            console.log(`[Chat Monitor] ${newMessages} novas mensagens salvas para: ${matchedLead.empresa}`);
+          }
+        }
+      }
+    }
+  }
+} finally {
+  session.isSending = false;
+  // Go back to clean state
+  await page.keyboard.press("Escape").catch(() => {});
+}
 }
 
 /**
@@ -682,6 +858,241 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
 
     return resultados;
   } finally {
+    session.isSending = false;
+  }
+}
+
+/**
+ * Sends a single WhatsApp message using Playwright session.
+ */
+export async function enviarMensagemAvulsa(vendedorId, telefone, texto) {
+  const session = sessions.get(vendedorId);
+  if (!session || session.status !== "connected") {
+    throw new Error("WhatsApp não está conectado para este vendedor.");
+  }
+
+  // Wait if another operation (like background sync) is in progress
+  let waitAttempts = 0;
+  while (session.isSending && waitAttempts < 30) {
+    await new Promise(r => setTimeout(r, 500));
+    waitAttempts++;
+  }
+
+  session.isSending = true;
+  try {
+    const page = session.page;
+    const phoneClean = formatarTelefoneWhatsApp(telefone);
+    const sendUrl = `https://web.whatsapp.com/send?phone=${phoneClean}&text=${encodeURIComponent(texto)}`;
+    
+    logDebug(vendedorId, `Iniciando envio de mensagem avulsa para ${telefone}...`);
+    await page.goto(sendUrl, { waitUntil: "domcontentloaded" });
+
+    const sendButtonSelector = '#main span[data-icon="send"], #main button[data-testid="compose-btn-send"], button[data-testid="compose-btn-send"]';
+    const textboxSelector = '#main div[contenteditable="true"], div[data-testid="conversation-text-input"], div[data-testid="compose-input"]';
+    
+    let action = await Promise.race([
+      page.waitForSelector(sendButtonSelector, { timeout: 30000 }).then(() => "send_btn"),
+      page.waitForSelector(textboxSelector, { timeout: 30000 }).then(() => "textbox"),
+      page.waitForSelector('div[role="dialog"]', { timeout: 30000 }).then(() => "dialog")
+    ]).catch(() => "timeout");
+
+    if (action === "dialog") {
+      const dialogText = await page.evaluate(() => {
+        const el = document.querySelector('div[role="dialog"]');
+        return el ? el.innerText : "";
+      }).catch(() => "");
+      logDebug(vendedorId, `Diálogo detectado no envio avulso: "${dialogText}"`);
+      
+      if (/iniciando|carregando|conectando|starting|loading|connecting/i.test(dialogText)) {
+        const secondAction = await Promise.race([
+          page.waitForSelector(sendButtonSelector, { timeout: 25000 }).then(() => "send_btn"),
+          page.waitForSelector(textboxSelector, { timeout: 25000 }).then(() => "textbox"),
+          page.waitForFunction(() => {
+            const el = document.querySelector('div[role="dialog"]');
+            if (!el) return false;
+            return !/iniciando|carregando|conectando|starting|loading|connecting/i.test(el.innerText || "");
+          }, { timeout: 25000 }).then(() => "dialog")
+        ]).catch(() => "timeout");
+        
+        if (secondAction === "timeout") {
+          throw new Error("Tempo limite de carregamento da conversa excedido.");
+        }
+        
+        if (secondAction === "dialog") {
+          const finalDialogText = await page.evaluate(() => {
+            const el = document.querySelector('div[role="dialog"]');
+            return el ? el.innerText : "";
+          }).catch(() => "");
+          
+          if (/inválido|invalid|não existe|não está|not exist|incorrect|not registered/i.test(finalDialogText)) {
+            const okBtn = await page.$('div[role="dialog"] button');
+            if (okBtn) await okBtn.click();
+            throw new Error("Número de telefone inválido ou não cadastrado no WhatsApp.");
+          }
+        }
+      } else if (/inválido|invalid|não existe|não está|not exist|incorrect|not registered/i.test(dialogText)) {
+        const okBtn = await page.$('div[role="dialog"] button');
+        if (okBtn) await okBtn.click();
+        throw new Error("Número de telefone inválido ou não cadastrado no WhatsApp.");
+      } else {
+        const buttons = await page.$$('div[role="dialog"] button, div[role="dialog"] [role="button"]');
+        if (buttons.length > 0) {
+          await buttons[0].click().catch(() => {});
+        }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+
+    if (action === "timeout") {
+      throw new Error("Tempo limite excedido ao carregar tela de envio.");
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+
+    const textbox = await page.$(textboxSelector);
+    if (textbox) {
+      const currentText = await page.evaluate(el => el.innerText || "", textbox);
+      if (!currentText.trim()) {
+        await textbox.focus();
+        await page.keyboard.type(texto, { delay: 50 });
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+
+    const sendBtn = await page.$(sendButtonSelector);
+    if (sendBtn) {
+      await sendBtn.click();
+    } else {
+      if (textbox) {
+        await textbox.focus();
+        await page.keyboard.press("Enter");
+      } else {
+        throw new Error("Elementos de envio não encontrados.");
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 4000));
+
+    // Update lead's ultima_mensagem in DB
+    const now = new Date().toISOString();
+    const cleanTel = telefone.replace(/\D/g, '');
+    const lead = db.prepare("SELECT * FROM leads WHERE vendedor_id = ?").all(vendedorId).find(l => {
+      const cleanDb = l.telefone.replace(/\D/g, '');
+      return cleanDb === cleanTel || cleanDb.endsWith(cleanTel) || cleanTel.endsWith(cleanDb);
+    });
+
+    if (lead) {
+      db.prepare(`
+        UPDATE leads 
+        SET ultima_mensagem = ?, atualizado_em = ?
+        WHERE id = ?
+      `).run(texto, now, lead.id);
+    }
+
+    logDebug(vendedorId, `Mensagem avulsa enviada com sucesso para ${telefone}`);
+    return true;
+  } catch (err) {
+    logDebug(vendedorId, `Erro ao enviar mensagem avulsa para ${telefone}: ${err.message}`);
+    throw err;
+  } finally {
+    if (session.status === "connected") {
+      await session.page.goto("https://web.whatsapp.com/", { waitUntil: "domcontentloaded" }).catch(() => {});
+    }
+    session.isSending = false;
+  }
+}
+
+/**
+ * Synchronizes the chat history for a specific lead.
+ */
+export async function sincronizarChatLead(vendedorId, leadId) {
+  const session = sessions.get(vendedorId);
+  if (!session || session.status !== "connected" || session.isSending) {
+    return false;
+  }
+
+  const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(leadId);
+  if (!lead) return false;
+
+  session.isSending = true;
+  try {
+    const page = session.page;
+    const phoneClean = formatarTelefoneWhatsApp(lead.telefone);
+    const chatUrl = `https://web.whatsapp.com/send?phone=${phoneClean}`;
+    
+    logDebug(vendedorId, `Sincronizando chat em background para: ${lead.empresa} (${lead.telefone})...`);
+    await page.goto(chatUrl, { waitUntil: "domcontentloaded" });
+
+    const sendButtonSelector = '#main span[data-icon="send"], #main button[data-testid="compose-btn-send"], button[data-testid="compose-btn-send"]';
+    const textboxSelector = '#main div[contenteditable="true"], div[data-testid="conversation-text-input"], div[data-testid="compose-input"]';
+    
+    let action = await Promise.race([
+      page.waitForSelector(sendButtonSelector, { timeout: 15000 }).then(() => "loaded"),
+      page.waitForSelector(textboxSelector, { timeout: 15000 }).then(() => "loaded"),
+      page.waitForSelector('div[role="dialog"]', { timeout: 15000 }).then(() => "dialog")
+    ]).catch(() => "timeout");
+
+    if (action === "dialog") {
+      const dialogText = await page.evaluate(() => {
+        const el = document.querySelector('div[role="dialog"]');
+        return el ? el.innerText : "";
+      }).catch(() => "");
+      
+      if (/iniciando|carregando|conectando|starting|loading|connecting/i.test(dialogText)) {
+        await Promise.race([
+          page.waitForSelector(sendButtonSelector, { timeout: 15000 }).then(() => "loaded"),
+          page.waitForSelector(textboxSelector, { timeout: 15000 }).then(() => "loaded")
+        ]).catch(() => "timeout");
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 2000)); // Let messages render
+
+    // Extract last 15 messages from `#main`
+    const chatMsgs = await page.evaluate(() => {
+      const bubbles = Array.from(document.querySelectorAll('#main div[data-testid="msg-container"], #main div.message-in, #main div.message-out'));
+      const lastBubbles = bubbles.slice(-15);
+      return lastBubbles.map(b => {
+        const isOut = b.classList.contains('message-out') || !!b.querySelector('.message-out') || b.innerHTML.includes('message-out');
+        const textEl = b.querySelector('span.selectable-text, span.copyable-text');
+        const text = textEl ? textEl.innerText : '';
+        return {
+          direcao: isOut ? 'out' : 'in',
+          texto: text
+        };
+      }).filter(m => m.texto.trim() !== '');
+    }).catch(() => []);
+
+    let newMessages = 0;
+    for (const msg of chatMsgs) {
+      const exists = db.prepare(`
+        SELECT 1 FROM mensagens_chat
+        WHERE lead_id = ? AND direcao = ? AND texto = ?
+      `).get(lead.id, msg.direcao, msg.texto);
+
+      if (!exists) {
+        const idMsg = 'wa_' + Math.random().toString(36).substring(2, 11);
+        const now = new Date().toISOString();
+        db.prepare(`
+          INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(idMsg, lead.id, vendedorId, msg.direcao, msg.texto, now);
+        newMessages++;
+      }
+    }
+
+    if (newMessages > 0) {
+      logDebug(vendedorId, `Sincronizados ${newMessages} novos registros para: ${lead.empresa}`);
+    }
+
+    return true;
+  } catch (err) {
+    logDebug(vendedorId, `Erro ao sincronizar chat para ${lead.empresa}: ${err.message}`);
+    return false;
+  } finally {
+    if (session.status === "connected") {
+      await session.page.goto("https://web.whatsapp.com/", { waitUntil: "domcontentloaded" }).catch(() => {});
+    }
     session.isSending = false;
   }
 }

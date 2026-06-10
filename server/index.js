@@ -10,7 +10,9 @@ import {
   conectarWhatsapp, 
   dispararMensagens, 
   checkSessionStatus, 
-  sessions
+  sessions,
+  enviarMensagemAvulsa,
+  sincronizarChatLead
 } from "./whatsapp.js";
 
 
@@ -1764,6 +1766,190 @@ app.post("/vendedores/:id/opcao-chip", (req, res) => {
 
     const freshVendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
     res.json({ ok: true, seller: freshVendedor, vendedor: freshVendedor });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/respostas-rapidas", (req, res) => {
+  try {
+    const { vendedorId, leadId } = req.query;
+
+    const templates = db.prepare("SELECT * FROM respostas_rapidas ORDER BY criado_em ASC").all();
+
+    // Se nenhum parâmetro for fornecido, retorna os templates crus (para o painel administrativo)
+    if (!vendedorId && !leadId) {
+      return res.json({ ok: true, templates });
+    }
+
+    let linkKiwify = "";
+    if (vendedorId) {
+      const vendedor = db.prepare("SELECT link_kiwify FROM vendedores WHERE id = ?").get(vendedorId);
+      if (vendedor && vendedor.link_kiwify) {
+        linkKiwify = vendedor.link_kiwify;
+      }
+    }
+
+    if (!linkKiwify) {
+      const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_afiliacao_kiwify");
+      if (globalConfig) {
+        linkKiwify = globalConfig.valor;
+      }
+    }
+
+    let empresa = "";
+    if (leadId) {
+      const lead = db.prepare("SELECT empresa FROM leads WHERE id = ?").get(leadId);
+      if (lead) {
+        empresa = lead.empresa;
+      }
+    }
+
+    const templatesProcessados = templates.map((t) => {
+      let texto = t.texto;
+      // Substituir placeholders
+      texto = texto.replace(/{link_kiwify}/g, linkKiwify || "");
+      texto = texto.replace(/{empresa}/g, empresa || "");
+      
+      return {
+        id: t.id,
+        titulo: t.titulo,
+        texto: texto
+      };
+    });
+
+    res.json({ ok: true, templates: templatesProcessados });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/respostas-rapidas", (req, res) => {
+  try {
+    const { titulo, texto } = req.body;
+    if (!titulo || !texto) {
+      return res.status(400).json({ ok: false, error: "Título e Texto são obrigatórios." });
+    }
+
+    const id = randomUUID();
+    const now = nowIso();
+
+    db.prepare(`
+      INSERT INTO respostas_rapidas (id, titulo, texto, criado_em)
+      VALUES (?, ?, ?, ?)
+    `).run(id, titulo, texto, now);
+
+    res.json({
+      ok: true,
+      template: { id, titulo, texto, criado_em: now }
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.put("/respostas-rapidas/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { titulo, texto } = req.body;
+
+    const templateExistente = db.prepare("SELECT * FROM respostas_rapidas WHERE id = ?").get(id);
+    if (!templateExistente) {
+      return res.status(404).json({ ok: false, error: "Resposta rápida não encontrada." });
+    }
+
+    const tituloFinal = titulo !== undefined ? titulo : templateExistente.titulo;
+    const textoFinal = texto !== undefined ? texto : templateExistente.texto;
+
+    db.prepare(`
+      UPDATE respostas_rapidas 
+      SET titulo = ?, texto = ?
+      WHERE id = ?
+    `).run(tituloFinal, textoFinal, id);
+
+    res.json({ ok: true, message: "Resposta rápida atualizada com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.delete("/respostas-rapidas/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const result = db.prepare("DELETE FROM respostas_rapidas WHERE id = ?").run(id);
+    if (result.changes === 0) {
+      return res.status(404).json({ ok: false, error: "Resposta rápida não encontrada." });
+    }
+
+    res.json({ ok: true, message: "Resposta rápida excluída com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// CHAT DE DUAS VIAS
+app.get("/leads/:leadId/mensagens", (req, res) => {
+  try {
+    const { leadId } = req.params;
+
+    // Trigger background sync when chat is requested
+    const lead = db.prepare("SELECT vendedor_id FROM leads WHERE id = ?").get(leadId);
+    if (lead && lead.vendedor_id) {
+      sincronizarChatLead(lead.vendedor_id, leadId)
+        .then((synced) => {
+          if (synced) console.log(`[Chat] Sincronização em background concluída para lead: ${leadId}`);
+        })
+        .catch((err) => {
+          console.error(`[Chat] Erro na sincronização em background para lead ${leadId}:`, err.message);
+        });
+    }
+
+    const msgs = db.prepare(`
+      SELECT * FROM mensagens_chat
+      WHERE lead_id = ?
+      ORDER BY timestamp ASC
+    `).all(leadId);
+    res.json({ ok: true, mensagens: msgs });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/leads/:leadId/mensagens/enviar", async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const { texto, vendedorId } = req.body;
+
+    if (!texto || !vendedorId) {
+      return res.status(400).json({ ok: false, error: "Texto e vendedorId são obrigatórios." });
+    }
+
+    const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(leadId);
+    if (!lead) {
+      return res.status(404).json({ ok: false, error: "Lead não encontrado." });
+    }
+
+    const now = nowIso();
+    const idMsg = randomUUID();
+
+    // 1. Insert into DB (so it immediately shows up in Nexus panel as pending/outgoing)
+    db.prepare(`
+      INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
+      VALUES (?, ?, ?, 'out', ?, ?)
+    `).run(idMsg, leadId, vendedorId, texto, now);
+
+    // 2. Trigger background dispatch through Playwright
+    // We run this asynchronously so the endpoint returns instantly
+    enviarMensagemAvulsa(vendedorId, lead.telefone, texto)
+      .then((success) => {
+        console.log(`[Chat] Mensagem avulsa para ${lead.empresa} enviada com sucesso: ${success}`);
+      })
+      .catch((err) => {
+        console.error(`[Chat] Erro ao enviar mensagem avulsa para ${lead.empresa}:`, err.message);
+      });
+
+    res.json({ ok: true, message: "Mensagem colocada na fila de envio com sucesso." });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
