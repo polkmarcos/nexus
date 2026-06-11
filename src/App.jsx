@@ -126,7 +126,7 @@ export default function App() {
       <main className="conteudo">
         {usuarioLogado && usuarioLogado.suspensao_ate && new Date(usuarioLogado.suspensao_ate) > new Date() ? (
           <TelaSuspensao usuarioLogado={usuarioLogado} setUsuarioLogado={setUsuarioLogado} sair={sair} />
-        ) : usuarioLogado && usuarioLogado.ativo === 0 ? (
+        ) : usuarioLogado && usuarioLogado.ativo === 0 && (usuarioLogado.eh_gerente || 0) === 0 ? (
           <TelaFilaEspera usuarioLogado={usuarioLogado} sair={sair} />
         ) : pagina.startsWith("admin-") && !adminToken ? (
           <LoginAdmin loginAdminSucesso={loginAdminSucesso} setPagina={setPagina} />
@@ -360,7 +360,7 @@ function Sidebar({ pagina, setPagina, usuarioLogado, sair, adminToken, sairAdmin
               )}
             </span>
           </div>
-          {usuarioLogado.ativo === 1 && (
+          {(usuarioLogado.ativo === 1 || (usuarioLogado.eh_gerente || 0) !== 0) && (
             <>
               <button
                 className={pagina === "vendedor-dashboard" ? "ativo" : ""}
@@ -3847,7 +3847,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
     }
   }
 
-  if (isTeste && !temVendasIniciadas) {
+  if (isTeste && !temVendasIniciadas && !isSending) {
     return (
       <section>
         <h1>Minha Carteira de Leads</h1>
@@ -4078,7 +4078,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
         
         {leadsEnviados.length === 0 ? (
           <p style={{ color: "var(--text-tertiary)", fontSize: "0.9rem", margin: "10px 0 0 0" }}>
-            Nenhuma mensagem enviada nesta sessão ainda.
+            {isSending ? "🔍 O robô está buscando novos leads na internet... aguarde o primeiro envio." : "Nenhuma mensagem enviada nesta sessão ainda."}
           </p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>

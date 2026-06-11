@@ -1692,7 +1692,7 @@ app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
     if (!vendedor) {
       return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
     }
-    if (vendedor.ativo === 0) {
+    if (vendedor.ativo === 0 && (vendedor.eh_gerente || 0) === 0) {
       return res.status(400).json({ ok: false, error: "Sua conta está inativa na fila de espera. Conecte seu WhatsApp para ser ativado." });
     }
 
@@ -1933,7 +1933,7 @@ app.post("/vendedores/:id/coletar-leads", (req, res) => {
     if (!vendedor) {
       return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
     }
-    if (vendedor.ativo === 0) {
+    if (vendedor.ativo === 0 && (vendedor.eh_gerente || 0) === 0) {
       return res.status(400).json({ ok: false, error: "Sua conta está inativa na fila de espera. Conecte seu WhatsApp para ser ativado." });
     }
 
