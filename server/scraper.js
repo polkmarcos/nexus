@@ -13,10 +13,10 @@ import db from "./db.js";
 export async function scrapeGoogleMaps(query, nicho, limit = 20, checkCancelled, onLeadSaved) {
   console.log(`Iniciando scraper do Google Maps. Query: "${query}", Nicho: "${nicho}", Limite: ${limit}`);
   
-  // Pré-carregar os leads do banco de dados para este nicho e otimizar busca de duplicados em memória
+  // Pré-carregar todos os leads do banco de dados (independente de nicho) para evitar duplicados entre vendedores
   const existingLeads = db.prepare(`
-    SELECT empresa, telefone, endereco FROM leads WHERE nicho = ?
-  `).all(nicho);
+    SELECT empresa, telefone, endereco FROM leads
+  `).all();
   
   const normalize = (str) => {
     if (!str) return "";
@@ -455,3 +455,380 @@ export async function scrapeGoogleMaps(query, nicho, limit = 20, checkCancelled,
   
   return leadsList;
 }
+
+/**
+ * Variante do scraper para uso durante disparo de mensagens.
+ * Salva cada lead encontrado diretamente como 'reservado' vinculado ao vendedor,
+ * e chama onLeadSaved imediatamente para que o pipeline de disparo envie a mensagem.
+ *
+ * @param {string} query - Busca no Google Maps (configurada pelo admin)
+ * @param {string} nicho - Nicho/categoria (configurado pelo admin)
+ * @param {number} limit - Limite de leads a raspar
+ * @param {string} vendedorId - ID do vendedor que vai receber/disparar os leads
+ * @param {Function} checkCancelled - Retorna true se o disparo foi cancelado
+ * @param {Function} onLeadSaved - Callback chamado logo após salvar cada lead
+ */
+export async function scrapeGoogleMapsParaDisparo(query, nicho, limit = 20, vendedorId, checkCancelled, onLeadSaved) {
+  console.log(`[Disparo] Iniciando raspagem para disparo. Query: "${query}", Nicho: "${nicho}", Limite: ${limit}, Vendedor: ${vendedorId}`);
+
+  // Pré-carregar todos os leads do banco para checar duplicados em memória (global — todos os vendedores)
+  const existingLeads = db.prepare(`
+    SELECT empresa, telefone, endereco FROM leads
+  `).all();
+
+  const normalize = (str) => {
+    if (!str) return "";
+    return str.toLowerCase()
+      .replace(/[^a-z0-9]/g, "")
+      .replace(/hamburguerias?/g, "")
+      .replace(/adegas?/g, "")
+      .replace(/barbearias?/g, "")
+      .replace(/padarias?/g, "")
+      .replace(/academias?/g, "")
+      .replace(/mogi/g, "")
+      .replace(/suzano/g, "")
+      .replace(/spaulo/g, "")
+      .replace(/saopaulo/g, "");
+  };
+
+  const existingNames = new Set();
+  const existingPhones = new Set();
+
+  for (const l of existingLeads) {
+    const norm = normalize(l.empresa);
+    if (norm.length >= 3) existingNames.add(norm);
+    if (l.telefone) existingPhones.add(l.telefone.replace(/\D/g, ""));
+  }
+
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  });
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/122.0.0.0 Safari/537.36",
+    locale: "pt-BR"
+  });
+  const page = await context.newPage();
+
+  const leadsList = [];
+
+  try {
+    const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+    // Aceitar cookies
+    try {
+      await page.waitForTimeout(1000);
+      const currentUrl = page.url();
+      if (currentUrl.includes("consent.google.com")) {
+        const acceptBtn = await page.$('button:has-text("Aceitar tudo"), button:has-text("Accept all"), form[action*="consent.google.com"] button, button');
+        if (acceptBtn) {
+          await acceptBtn.click();
+          await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+        }
+      }
+      const inlineConsentSelectors = [
+        'button[aria-label="Aceitar tudo"]',
+        'button[aria-label="Accept all"]',
+        'button:has-text("Aceitar tudo")',
+        'button:has-text("Accept all")',
+        'button:has-text("Concordo")',
+        'button:has-text("Agree")'
+      ].join(', ');
+      const inlineConsentBtn = await page.$(inlineConsentSelectors);
+      if (inlineConsentBtn) {
+        await inlineConsentBtn.click();
+        await page.waitForTimeout(1000);
+      }
+    } catch (_) {}
+
+    try {
+      await page.waitForSelector('a[href*="/maps/place/"]', { timeout: 15000 });
+    } catch (_) {}
+
+    // Rolar para carregar resultados
+    const feedSelector = 'div[role="feed"]';
+    let loadedCount = 0;
+    let previousCount = 0;
+    let scrollAttempts = 0;
+    const maxScrollAttempts = 30;
+
+    while (loadedCount < limit && scrollAttempts < maxScrollAttempts) {
+      if (checkCancelled && checkCancelled()) break;
+
+      const links = await page.$$('a.hfpxzc, a[href*="/maps/place/"]');
+      const uniqueHrefs = new Set();
+      let nonDuplicateCount = 0;
+
+      for (const link of links) {
+        const href = await link.getAttribute("href").catch(() => null);
+        if (href) {
+          const cleanHref = href.split('?')[0];
+          if (!uniqueHrefs.has(cleanHref)) {
+            uniqueHrefs.add(cleanHref);
+            const labelName = await link.getAttribute("aria-label").catch(() => "");
+            if (labelName) {
+              const cleanName = normalize(labelName.split(/[|•-]/)[0]);
+              if (cleanName.length >= 3 && existingNames.has(cleanName)) continue;
+            }
+            nonDuplicateCount++;
+          }
+        }
+      }
+      loadedCount = nonDuplicateCount;
+
+      if (loadedCount >= limit) break;
+
+      await page.evaluate((sel) => {
+        const feed = document.querySelector(sel);
+        if (feed) feed.scrollBy(0, 3000);
+        else window.scrollBy(0, 2000);
+      }, feedSelector);
+
+      await new Promise(r => setTimeout(r, 800));
+
+      if (loadedCount === previousCount) scrollAttempts++;
+      else { previousCount = loadedCount; scrollAttempts = 0; }
+    }
+
+    // Coletar links únicos
+    const allLinks = await page.$$('a.hfpxzc, a[href*="/maps/place/"]');
+    const seenHrefs = new Set();
+    const placeLinks = [];
+
+    for (const link of allLinks) {
+      const href = await link.getAttribute("href").catch(() => null);
+      if (href) {
+        const cleanHref = href.split('?')[0];
+        if (!seenHrefs.has(cleanHref)) {
+          seenHrefs.add(cleanHref);
+          placeLinks.push(link);
+        }
+      }
+    }
+
+    console.log(`[Disparo] ${placeLinks.length} locais encontrados no feed.`);
+
+    for (const link of placeLinks) {
+      if (checkCancelled && checkCancelled()) {
+        console.log("[Disparo] Raspagem cancelada pelo usuário.");
+        break;
+      }
+      if (leadsList.length >= limit) break;
+
+      try {
+        const expectedName = await link.getAttribute("aria-label").catch(() => "");
+
+        if (expectedName) {
+          const cleanName = normalize(expectedName.split(/[|•-]/)[0]);
+          if (cleanName.length >= 3 && existingNames.has(cleanName)) {
+            console.log(`[Disparo] Pulo rápido: "${expectedName}" já cadastrado.`);
+            continue;
+          }
+        }
+
+        await link.scrollIntoViewIfNeeded().catch(() => {});
+        await link.click({ force: true }).catch(() => {});
+
+        const startTime = Date.now();
+        let extracted = null;
+
+        while (Date.now() - startTime < 3500) {
+          if (checkCancelled && checkCancelled()) break;
+
+          extracted = await page.evaluate((expectedName) => {
+            const info = { empresa: "", telefone: "", endereco: "", site: "", loaded: false };
+            const h1s = Array.from(document.querySelectorAll('h1'));
+            const detailsH1 = h1s.find(h => h.innerText && h.innerText !== "Resultados" && h.innerText !== "Filtros");
+
+            if (detailsH1) {
+              info.empresa = detailsH1.innerText.trim();
+              if (expectedName) {
+                const cleanExpected = expectedName.toLowerCase().replace(/[^a-z0-9]/g, "");
+                const cleanDetails = info.empresa.toLowerCase().replace(/[^a-z0-9]/g, "");
+                if (!cleanExpected.includes(cleanDetails) && !cleanDetails.includes(cleanExpected)) return info;
+              }
+              info.loaded = true;
+
+              const phoneBtn = document.querySelector('button[data-item-id^="phone:tel:"]');
+              if (phoneBtn) info.telefone = phoneBtn.getAttribute('data-item-id').replace("phone:tel:", "").trim();
+
+              if (!info.telefone) {
+                const telLink = document.querySelector('a[href^="tel:"]');
+                if (telLink) info.telefone = telLink.getAttribute('href').replace("tel:", "").trim();
+              }
+
+              if (!info.telefone) {
+                const buttons = Array.from(document.querySelectorAll('button, a'));
+                const phoneEl = buttons.find(b => {
+                  const label = b.getAttribute('aria-label') || '';
+                  return label.toLowerCase().includes('telefone') || label.toLowerCase().includes('phone');
+                });
+                if (phoneEl) {
+                  const label = phoneEl.getAttribute('aria-label') || '';
+                  const match = label.match(/(?:\+55\s?)?\(?\d{2}\)?\s?9?\d{4}[-\s]?\d{4}\b/);
+                  if (match) info.telefone = match[0];
+                }
+              }
+
+              if (!info.telefone) {
+                let parent = detailsH1.parentElement;
+                let panelText = "";
+                while (parent) {
+                  const style = window.getComputedStyle(parent);
+                  if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && parent.scrollHeight > parent.clientHeight) {
+                    panelText = parent.innerText;
+                    break;
+                  }
+                  parent = parent.parentElement;
+                }
+                if (panelText) {
+                  const matches = panelText.match(/(?:\+55\s?)?\(?\d{2}\)?\s?9?\d{4}[-\s]?\d{4}\b/g);
+                  if (matches && matches.length > 0) info.telefone = matches[0];
+                }
+              }
+
+              const addressButton = document.querySelector('button[data-item-id^="address"]');
+              if (addressButton) info.endereco = addressButton.innerText.trim();
+
+              const websiteLink = document.querySelector('a[data-item-id="authority"]');
+              if (websiteLink) info.site = websiteLink.getAttribute("href") || "";
+            }
+
+            return info;
+          }, expectedName);
+
+          if (extracted.loaded) {
+            if (extracted.telefone || (Date.now() - startTime > 1200)) break;
+          }
+          await new Promise(r => setTimeout(r, 150));
+        }
+
+        const empresa = extracted.empresa || expectedName || "";
+        const telefone = extracted.telefone;
+        const endereco = extracted.endereco;
+        const site = extracted.site;
+
+        if (!telefone) {
+          console.log(`[Disparo] Lead "${empresa}" ignorado: sem telefone.`);
+          continue;
+        }
+
+        let phoneClean = telefone.replace(/\D/g, "");
+        if (phoneClean.length === 10 || phoneClean.length === 11) phoneClean = "55" + phoneClean;
+
+        // Extrair cidade e estado
+        let cidade = "";
+        let estado = "";
+        if (endereco) {
+          const stateMatch = endereco.match(/\s-\s([A-Z]{2})\b/);
+          if (stateMatch) estado = stateMatch[1];
+          const cityMatch = endereco.match(/,\s?([^,]+)\s-\s[A-Z]{2}\b/);
+          if (cityMatch) {
+            cidade = cityMatch[1].trim();
+          } else {
+            const parts = endereco.split(",");
+            const partsReversed = [...parts].reverse();
+            if (partsReversed.length > 1) {
+              const cityStatePart = partsReversed[1].trim();
+              if (cityStatePart.includes("-")) {
+                const sp = cityStatePart.split("-");
+                cidade = sp[0].trim();
+                if (!estado) estado = sp[1].trim();
+              } else {
+                cidade = cityStatePart;
+              }
+            }
+          }
+        }
+
+        // Verificar duplicados em memória
+        if (existingPhones.has(phoneClean)) {
+          console.log(`[Disparo] Lead "${empresa}" (${phoneClean}) já cadastrado (telefone). Ignorado.`);
+          continue;
+        }
+        const normEmpresa = normalize(empresa);
+        if (normEmpresa.length >= 3 && existingNames.has(normEmpresa)) {
+          console.log(`[Disparo] Lead "${empresa}" já cadastrado (nome). Ignorado.`);
+          continue;
+        }
+
+        // Verificar duplicados no banco (garantia extra)
+        const duplicated = db.prepare(`
+          SELECT id FROM leads WHERE telefone = ? OR (empresa = ? AND endereco = ?)
+        `).get(phoneClean, empresa, endereco);
+
+        if (duplicated) {
+          console.log(`[Disparo] Lead "${empresa}" (${phoneClean}) já no banco. Ignorado.`);
+          existingPhones.add(phoneClean);
+          if (normEmpresa.length >= 3) existingNames.add(normEmpresa);
+          continue;
+        }
+
+        const now = new Date().toISOString();
+
+        // Salvar lead DIRETAMENTE como reservado para o vendedor
+        const lead = {
+          id: randomUUID(),
+          empresa,
+          telefone: phoneClean,
+          cidade: cidade || "Não Informada",
+          estado: estado || "Não Informado",
+          nicho,
+          status: "reservado",
+          vendedor_id: vendedorId,
+          assigned_to: vendedorId,
+          assigned_at: now,
+          origem: "Google Maps",
+          query_origem: query,
+          endereco: endereco || "Não Informado",
+          site: site || "",
+          ultima_mensagem: null,
+          observacoes: "",
+          criado_em: now,
+          atualizado_em: now
+        };
+
+        db.prepare(`
+          INSERT INTO leads (
+            id, empresa, telefone, cidade, estado, nicho, status, vendedor_id,
+            assigned_to, assigned_at,
+            origem, query_origem, endereco, site, ultima_mensagem, observacoes, criado_em, atualizado_em
+          ) VALUES (
+            @id, @empresa, @telefone, @cidade, @estado, @nicho, @status, @vendedor_id,
+            @assigned_to, @assigned_at,
+            @origem, @query_origem, @endereco, @site, @ultima_mensagem, @observacoes, @criado_em, @atualizado_em
+          )
+        `).run(lead);
+
+        // Atualizar conjuntos de deduplicação
+        existingPhones.add(phoneClean);
+        if (normEmpresa.length >= 3) existingNames.add(normEmpresa);
+
+        leadsList.push(lead);
+        console.log(`[Disparo] Lead salvo como reservado: ${empresa} - ${phoneClean} → vendedor ${vendedorId}`);
+
+        // Disparar callback imediatamente para o pipeline enviar a mensagem
+        if (onLeadSaved) {
+          try {
+            onLeadSaved(lead);
+          } catch (callbackErr) {
+            console.error("[Disparo] Erro no callback onLeadSaved:", callbackErr.message);
+          }
+        }
+
+      } catch (placeErr) {
+        console.error(`[Disparo] Erro ao capturar detalhes de local: ${placeErr.message}`);
+      }
+    }
+
+  } catch (err) {
+    console.error(`[Disparo] Erro geral na raspagem: ${err.message}`);
+    throw err;
+  } finally {
+    await browser.close();
+  }
+
+  return leadsList;
+}
+

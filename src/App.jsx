@@ -52,6 +52,7 @@ export default function App() {
   const [usuarioLogado, setUsuarioLogado] = useState(usuarioInicial);
   const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") || "");
   const [pagina, setPagina] = useState(usuarioInicial ? "vendedor-dashboard" : "landing");
+  const [adminMensagensAba, setAdminMensagensAba] = useState("prospeccao");
   const [mobileMenuAberto, setMobileMenuAberto] = useState(false);
 
 
@@ -132,11 +133,11 @@ export default function App() {
         ) : (
           <>
             {/* Admin Pages */}
-            {pagina === "admin-dashboard" && <AdminDashboard />}
+            {pagina === "admin-dashboard" && <AdminDashboard setPagina={setPagina} setAdminMensagensAba={setAdminMensagensAba} />}
             {pagina === "admin-vendedores" && <AdminVendedores />}
             {pagina === "admin-captura" && <AdminCaptura />}
             {pagina === "admin-leads" && <AdminLeads />}
-            {pagina === "admin-mensagens" && <AdminMensagens />}
+            {pagina === "admin-mensagens" && <AdminMensagens abaAtiva={adminMensagensAba} setAbaAtiva={setAdminMensagensAba} />}
             {pagina === "admin-prevendas" && <AdminPreVendas />}
 
             {/* Seller Pages */}
@@ -271,7 +272,10 @@ function Sidebar({ pagina, setPagina, usuarioLogado, sair, adminToken, sairAdmin
                 </button>
                 <button
                   className={pagina === "admin-mensagens" ? "ativo" : ""}
-                  onClick={() => setPagina("admin-mensagens")}
+                  onClick={() => {
+                    setPagina("admin-mensagens");
+                    setAdminMensagensAba("prospeccao");
+                  }}
                 >
                   <span className="sidebar-icon">💬</span>
                   <span className="sidebar-text">Modelos de Mensagem</span>
@@ -394,7 +398,7 @@ function Sidebar({ pagina, setPagina, usuarioLogado, sair, adminToken, sairAdmin
 }
 
 // 1. ADMIN DASHBOARD
-function AdminDashboard() {
+function AdminDashboard({ setPagina, setAdminMensagensAba }) {
   const [estatisticas, setEstatisticas] = useState({
     total: 0,
     novo: 0,
@@ -419,6 +423,11 @@ function AdminDashboard() {
   const [precoProduto, setPrecoProduto] = useState(200);
   const [linkAfiliacaoKiwify, setLinkAfiliacaoKiwify] = useState("");
   const [novaSenhaAdmin, setNovaSenhaAdmin] = useState("");
+  const [queryDisparo, setQueryDisparo] = useState("");
+  const [nichoDisparo, setNichoDisparo] = useState("");
+  const [limiteDisparo, setLimiteDisparo] = useState(20);
+  const [msgRobo, setMsgRobo] = useState("");
+  const [msgHumano, setMsgHumano] = useState("");
   const [configErro, setConfigErro] = useState("");
   const [configSucesso, setConfigSucesso] = useState("");
 
@@ -474,7 +483,8 @@ function AdminDashboard() {
             ...v,
             totalLeads: leadsVendedor.length,
             vendas,
-            comissao: vendas * comVal
+            comissao: vendas * comVal,
+            comissao_gerente: v.comissao_gerente || 0,
           };
         });
         setVendedores(vList);
@@ -493,6 +503,11 @@ function AdminDashboard() {
         if (data.comissao_venda) setComissaoVenda(Number(data.comissao_venda));
         if (data.preco_produto) setPrecoProduto(Number(data.preco_produto));
         if (data.link_afiliacao_kiwify) setLinkAfiliacaoKiwify(data.link_afiliacao_kiwify);
+        if (data.query_disparo !== undefined) setQueryDisparo(data.query_disparo);
+        if (data.nicho_disparo !== undefined) setNichoDisparo(data.nicho_disparo);
+        if (data.limite_disparo !== undefined) setLimiteDisparo(Number(data.limite_disparo));
+        if (data.mensagem_resposta_robo !== undefined) setMsgRobo(data.mensagem_resposta_robo);
+        if (data.mensagem_resposta_humano !== undefined) setMsgHumano(data.mensagem_resposta_humano);
       }
     } catch (e) {
       console.error("Erro ao carregar configurações", e);
@@ -509,7 +524,12 @@ function AdminDashboard() {
         limite_vendedores_ativos: limiteVendedores,
         comissao_venda: comissaoVenda,
         preco_produto: precoProduto,
-        link_afiliacao_kiwify: linkAfiliacaoKiwify
+        link_afiliacao_kiwify: linkAfiliacaoKiwify,
+        query_disparo: queryDisparo,
+        nicho_disparo: nichoDisparo,
+        limite_disparo: limiteDisparo,
+        mensagem_resposta_robo: msgRobo,
+        mensagem_resposta_humano: msgHumano
       };
       if (novaSenhaAdmin.trim() !== "") {
         payload.senha_administrador = novaSenhaAdmin;
@@ -600,17 +620,20 @@ function AdminDashboard() {
             <thead>
               <tr>
                 <th>Vendedor</th>
+                <th>Nível</th>
                 <th>Status</th>
                 <th>Leads Atribuídos</th>
                 <th>Limite Diário</th>
                 <th>Vendas Convertidas</th>
-                <th>Comissão Acumulada</th>
+                <th>Comissão Própria</th>
+                <th>Comissão Gerência</th>
+                <th>Total Ganho</th>
               </tr>
             </thead>
             <tbody>
               {vendedores.length === 0 ? (
                 <tr>
-                  <td colSpan="6" style={{ textAlign: "center" }}>Nenhum vendedor registrado.</td>
+                  <td colSpan="9" style={{ textAlign: "center" }}>Nenhum vendedor registrado.</td>
                 </tr>
               ) : (
                 vendedores.map(v => (
@@ -618,6 +641,12 @@ function AdminDashboard() {
                     <td>
                       <strong>{v.nome}</strong>
                       <br /><small>{v.email}</small>
+                      {v.pix && (
+                        <>
+                          <br />
+                          <small style={{ color: "var(--success)", fontWeight: "600" }}>🔑 PIX: {v.pix}</small>
+                        </>
+                      )}
                       {v.link_kiwify && (
                         <>
                           <br />
@@ -634,6 +663,11 @@ function AdminDashboard() {
                       )}
                     </td>
                     <td>
+                      {v.eh_gerente === 0 && <span className="badge badge-vacuo" style={{ fontSize: "0.75rem", padding: "2px 6px" }}>Vendedor</span>}
+                      {v.eh_gerente === 1 && <span className="badge badge-prevenda" style={{ fontSize: "0.75rem", padding: "2px 6px", textTransform: "none" }}>Gerente Base</span>}
+                      {v.eh_gerente === 2 && <span className="badge" style={{ fontSize: "0.75rem", padding: "2px 6px", textTransform: "none", backgroundColor: "rgba(139, 92, 246, 0.15)", color: "#8b5cf6", border: "1px solid rgba(139, 92, 246, 0.3)" }}>Gerente Pro</span>}
+                    </td>
+                    <td>
                       <span className={`badge ${v.ativo ? "badge-prevenda" : "badge-vacuo"}`}>
                         {v.ativo ? "Ativo" : "Inativo"}
                       </span>
@@ -641,7 +675,15 @@ function AdminDashboard() {
                     <td>{v.totalLeads} leads</td>
                     <td>{v.limite_diario} por dia</td>
                     <td><strong>{v.vendas}</strong></td>
-                    <td style={{ color: "var(--success)", fontWeight: "bold" }}>R$ {v.comissao}</td>
+                    <td style={{ color: "var(--success)", fontWeight: "bold" }}>
+                      {v.comissao.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    </td>
+                    <td style={{ color: "var(--primary)", fontWeight: "bold" }}>
+                      {(v.comissao_gerente || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    </td>
+                    <td style={{ color: "var(--success)", fontWeight: "bold", fontSize: "1.05rem" }}>
+                      {(v.comissao + (v.comissao_gerente || 0)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    </td>
                   </tr>
                 ))
               )}
@@ -717,6 +759,49 @@ function AdminDashboard() {
               </small>
             </div>
 
+            <div className="form-group" style={{ gridColumn: "span 2" }}>
+              <label>🎯 Query de Disparo (Busca no Google Maps)</label>
+              <input
+                type="text"
+                value={queryDisparo}
+                onChange={e => setQueryDisparo(e.target.value)}
+                placeholder="Ex: hamburgueria em Mogi das Cruzes SP"
+                required
+              />
+              <small style={{ color: "var(--text-secondary)" }}>
+                Texto exato de busca que o vendedor usará ao disparar mensagens. Ex: <strong>"pizzaria em São Paulo SP"</strong>
+              </small>
+            </div>
+
+            <div className="form-group">
+              <label>🏷️ Nicho de Disparo</label>
+              <input
+                type="text"
+                value={nichoDisparo}
+                onChange={e => setNichoDisparo(e.target.value)}
+                placeholder="Ex: hamburguerias"
+                required
+              />
+              <small style={{ color: "var(--text-secondary)" }}>
+                Categoria do nicho para classificação dos leads no banco de dados.
+              </small>
+            </div>
+
+            <div className="form-group">
+              <label>📊 Limite de Leads por Disparo</label>
+              <input
+                type="number"
+                min="5"
+                max="200"
+                value={limiteDisparo}
+                onChange={e => setLimiteDisparo(Number(e.target.value))}
+                required
+              />
+              <small style={{ color: "var(--text-secondary)" }}>
+                Quantidade máxima de leads que serão raspados e disparados por sessão de envio.
+              </small>
+            </div>
+
             <div className="form-group">
               <label>Alterar Senha do Administrador</label>
               <input 
@@ -728,6 +813,40 @@ function AdminDashboard() {
               <small style={{ color: "var(--text-secondary)" }}>
                 Nova senha para login no painel de controle.
               </small>
+            </div>
+
+            <div style={{
+              gridColumn: "span 2",
+              padding: "16px 20px",
+              background: "rgba(59, 130, 246, 0.1)",
+              border: "1px solid rgba(59, 130, 246, 0.25)",
+              borderRadius: "8px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "20px",
+              marginTop: "10px",
+              flexWrap: "wrap"
+            }}>
+              <div style={{ flex: "1 1 300px" }}>
+                <strong style={{ color: "var(--primary)", display: "flex", alignItems: "center", gap: "6px" }}>
+                  🤖 Respostas Automáticas (Robô vs Humano)
+                </strong>
+                <p style={{ margin: "6px 0 0 0", fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.4 }}>
+                  Os modelos de mensagens enviadas automaticamente quando o lead responder (Robô/Menu digital ou Humano/Pessoa real) agora possuem um painel dedicado com explicações de critérios, variáveis e substituição do link de afiliado.
+                </p>
+              </div>
+              <button 
+                type="button" 
+                className="btn btn-primary" 
+                onClick={() => {
+                  setAdminMensagensAba("auto-reply");
+                  setPagina("admin-mensagens");
+                }}
+                style={{ padding: "10px 20px", fontSize: "0.88rem", whiteSpace: "nowrap", width: "auto", margin: 0 }}
+              >
+                ⚙️ Configurar Respostas Automáticas
+              </button>
             </div>
           </div>
           
@@ -752,6 +871,7 @@ function AdminVendedores() {
     limite_diario: 25,
     cpf: "",
     link_kiwify: "",
+    eh_gerente: 0,
   });
   const [erro, setErro] = useState("");
   const [sucesso, setSucesso] = useState("");
@@ -821,13 +941,14 @@ function AdminVendedores() {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            nome: form.nome,
+            nome: form.nome.toUpperCase().trim(),
             email: form.email,
             senha: form.senha || undefined, // only update password if filled
             whatsapp: form.whatsapp,
             limite_diario: Number(form.limite_diario),
             cpf: form.cpf,
             link_kiwify: form.link_kiwify,
+            eh_gerente: Number(form.eh_gerente),
           })
         });
       } else {
@@ -835,7 +956,12 @@ function AdminVendedores() {
         res = await fetch(`${API_URL}/vendedores`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(form)
+          body: JSON.stringify({
+            ...form,
+            nome: form.nome.toUpperCase().trim(),
+            limite_diario: Number(form.limite_diario),
+            eh_gerente: Number(form.eh_gerente),
+          })
         });
       }
 
@@ -846,7 +972,7 @@ function AdminVendedores() {
       }
 
       setSucesso(editando ? "Vendedor atualizado com sucesso!" : "Vendedor cadastrado com sucesso!");
-      setForm({ nome: "", email: "", senha: "", whatsapp: "", limite_diario: 25, cpf: "", link_kiwify: "" });
+      setForm({ nome: "", email: "", senha: "", whatsapp: "", limite_diario: 25, cpf: "", link_kiwify: "", eh_gerente: 0 });
       setEditando(null);
       carregarVendedores();
     } catch (err) {
@@ -864,6 +990,7 @@ function AdminVendedores() {
       limite_diario: vendedor.limite_diario,
       cpf: vendedor.cpf || "",
       link_kiwify: vendedor.link_kiwify || "",
+      eh_gerente: vendedor.eh_gerente || 0,
     });
   }
 
@@ -896,7 +1023,7 @@ function AdminVendedores() {
           <div className="form-grid">
             <div className="form-group">
               <label>Nome do Vendedor</label>
-              <input name="nome" value={form.nome} onChange={alterarCampo} required placeholder="Ex: Marc Thay" />
+              <input name="nome" value={form.nome} onChange={alterarCampo} required placeholder="Ex: João da Silva" />
             </div>
             <div className="form-group">
               <label>CPF</label>
@@ -927,6 +1054,14 @@ function AdminVendedores() {
               <label>Limite Diário de Leads</label>
               <input name="limite_diario" type="number" min="1" max="500" value={form.limite_diario} onChange={alterarCampo} required />
             </div>
+            <div className="form-group">
+              <label>Nível de Acesso (Gerência)</label>
+              <select name="eh_gerente" value={form.eh_gerente} onChange={alterarCampo}>
+                <option value={0}>Regular Vendedor</option>
+                <option value={1}>Gerente Base (R$ 100/venda)</option>
+                <option value={2}>Gerente Pro (R$ 300/venda)</option>
+              </select>
+            </div>
           </div>
           <div style={{ display: "flex", gap: "10px" }}>
             <button className="btn btn-primary" type="submit">
@@ -935,7 +1070,7 @@ function AdminVendedores() {
             {editando && (
               <button className="btn btn-secondary" type="button" onClick={() => {
                 setEditando(null);
-                setForm({ nome: "", email: "", senha: "", whatsapp: "", limite_diario: 25, cpf: "", link_kiwify: "" });
+                setForm({ nome: "", email: "", senha: "", whatsapp: "", limite_diario: 25, cpf: "", link_kiwify: "", eh_gerente: 0 });
               }}>Cancelar Edição</button>
             )}
           </div>
@@ -979,9 +1114,16 @@ function AdminVendedores() {
                   .map(v => (
                     <tr key={v.id}>
                       <td>
-                        <strong>{v.nome}</strong>
+                        <strong>{v.nome}</strong>{" "}
+                        {v.eh_gerente === 1 && <span className="badge badge-prevenda" style={{ fontSize: "0.7rem", padding: "1px 5px", textTransform: "none" }}>Gerente Base</span>}
+                        {v.eh_gerente === 2 && <span className="badge" style={{ fontSize: "0.7rem", padding: "1px 5px", textTransform: "none", backgroundColor: "rgba(139, 92, 246, 0.15)", color: "#8b5cf6", border: "1px solid rgba(139, 92, 246, 0.3)" }}>Gerente Pro</span>}
                         <br /><small>{v.email}</small>
                         <br /><small style={{ color: "var(--text-tertiary)" }}>CPF: {v.cpf || "Não cadastrado"}</small>
+                        {v.pix && (
+                          <>
+                            <br /><small style={{ color: "var(--success)", fontWeight: "600" }}>🔑 PIX: {v.pix}</small>
+                          </>
+                        )}
                       </td>
                       <td>
                         <span>📞 {v.whatsapp}</span>
@@ -1732,6 +1874,26 @@ function AdminLeads() {
     }
   }
 
+  async function excluirLead(id, empresa) {
+    if (!window.confirm(`Tem certeza que deseja excluir o lead da empresa "${empresa}"?`)) {
+      return;
+    }
+    setMensagemStatus("");
+    try {
+      const res = await fetch(`${API_URL}/leads/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (res.ok) {
+        setMensagemStatus(`Lead de "${empresa}" excluído com sucesso.`);
+        carregarLeads();
+      } else {
+        setMensagemStatus("Erro: " + data.error);
+      }
+    } catch (e) {
+      console.error(e);
+      setMensagemStatus("Erro ao comunicar com o servidor.");
+    }
+  }
+
   function exportarLeadsCSV() {
     if (leadsFiltrados.length === 0) {
       alert("Não há leads para exportar.");
@@ -1966,12 +2128,13 @@ function AdminLeads() {
                 <th>Status</th>
                 <th>Vendedor Responsável</th>
                 <th>Origem</th>
+                <th style={{ textAlign: "center" }}>Ações</th>
               </tr>
             </thead>
             <tbody>
               {leadsFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan="7" style={{ textAlign: "center" }}>Nenhum lead encontrado com os filtros atuais.</td>
+                  <td colSpan="8" style={{ textAlign: "center" }}>Nenhum lead encontrado com os filtros atuais.</td>
                 </tr>
               ) : (
                 leadsFiltrados.map(l => (
@@ -1992,6 +2155,16 @@ function AdminLeads() {
                     </td>
                     <td>{l.vendedor_nome ? <strong>👤 {l.vendedor_nome}</strong> : <span style={{ color: "var(--text-tertiary)" }}>Não atribuído</span>}</td>
                     <td><small>{l.origem}<br />({l.query_origem})</small></td>
+                    <td style={{ textAlign: "center" }}>
+                      <button 
+                        type="button"
+                        className="btn btn-secondary" 
+                        onClick={() => excluirLead(l.id, l.empresa)}
+                        style={{ padding: "6px 10px", fontSize: "0.8rem", background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.3)", color: "#ef4444" }}
+                      >
+                        🗑️ Excluir
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -2005,16 +2178,30 @@ function AdminLeads() {
 
 // 5. ADMIN MESSAGING TEMPLATE
 // 5. ADMIN MESSAGING TEMPLATE
-function AdminMensagens() {
-  const [abaAtiva, setAbaAtiva] = useState("prospeccao"); // "prospeccao" ou "chat-rapido"
+function AdminMensagens({ abaAtiva, setAbaAtiva }) {
   const [mensagens, setMensagens] = useState([]);
-  const [form, setForm] = useState({ nome: "", texto: "" });
+  const [form, setForm] = useState({ nome: "", texto: "", condicao_site: "qualquer" });
   const [editingId, setEditingId] = useState(null);
   const [erro, setErro] = useState("");
   const [sucesso, setSucesso] = useState("");
 
+  // Auto-reply state
+  const [msgRobo, setMsgRobo] = useState("");
+  const [msgHumano, setMsgHumano] = useState("");
+  const [autoReplySucesso, setAutoReplySucesso] = useState("");
+  const [autoReplyErro, setAutoReplyErro] = useState("");
+
   async function carregarDados() {
     try {
+      if (abaAtiva === "auto-reply") {
+        const res = await fetch(`${API_URL}/configuracoes`);
+        const data = await res.json();
+        if (data.ok) {
+          setMsgRobo(data.mensagem_resposta_robo || "");
+          setMsgHumano(data.mensagem_resposta_humano || "");
+        }
+        return;
+      }
       const endpoint = abaAtiva === "prospeccao" ? "/mensagens" : "/respostas-rapidas";
       const res = await fetch(`${API_URL}${endpoint}`);
       const data = await res.json();
@@ -2034,6 +2221,27 @@ function AdminMensagens() {
     carregarDados();
   }, [abaAtiva]);
 
+  async function salvarAutoReply(e) {
+    e.preventDefault();
+    setAutoReplyErro("");
+    setAutoReplySucesso("");
+    try {
+      const res = await fetch(`${API_URL}/configuracoes`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mensagem_resposta_robo: msgRobo, mensagem_resposta_humano: msgHumano })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAutoReplySucesso("Mensagens de resposta automática salvas com sucesso!");
+      } else {
+        setAutoReplyErro(data.error || "Erro ao salvar.");
+      }
+    } catch (e) {
+      setAutoReplyErro("Erro de comunicação com o servidor.");
+    }
+  }
+
   async function salvarMensagem(e) {
     e.preventDefault();
     setErro("");
@@ -2051,7 +2259,7 @@ function AdminMensagens() {
       const method = editingId ? "PUT" : "POST";
       
       const body = isProsp 
-        ? { nome: form.nome, texto: form.texto }
+        ? { nome: form.nome, texto: form.texto, condicao_site: form.condicao_site }
         : { titulo: form.nome, texto: form.texto };
 
       const res = await fetch(url, {
@@ -2088,7 +2296,8 @@ function AdminMensagens() {
     setEditingId(m.id);
     setForm({ 
       nome: abaAtiva === "prospeccao" ? m.nome : m.titulo, 
-      texto: m.texto 
+      texto: m.texto,
+      condicao_site: m.condicao_site || "qualquer"
     });
     setErro("");
     setSucesso("");
@@ -2097,7 +2306,7 @@ function AdminMensagens() {
 
   function cancelarEdicao() {
     setEditingId(null);
-    setForm({ nome: "", texto: "" });
+    setForm({ nome: "", texto: "", condicao_site: "qualquer" });
     setErro("");
     setSucesso("");
   }
@@ -2128,6 +2337,7 @@ function AdminMensagens() {
   }
 
   const isProsp = abaAtiva === "prospeccao";
+  const isAutoReply = abaAtiva === "auto-reply";
 
   return (
     <section>
@@ -2135,144 +2345,292 @@ function AdminMensagens() {
       <p className="subtitle">
         {isProsp 
           ? "Configure o modelo de mensagem que os vendedores dispararão automaticamente via WhatsApp Web."
-          : "Configure as respostas rápidas pré-salvas que os vendedores usarão no chat de duas vias."}
+          : isAutoReply
+            ? "Configure as mensagens enviadas automaticamente quando o lead responder — robô ou humano."
+            : "Configure as respostas rápidas pré-salvas que os vendedores usarão no chat de duas vias."}
       </p>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
+      <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" }}>
         <button
           className={`btn ${isProsp ? "btn-primary" : "btn-secondary"}`}
-          onClick={() => {
-            setAbaAtiva("prospeccao");
-            cancelarEdicao();
-          }}
+          onClick={() => { setAbaAtiva("prospeccao"); cancelarEdicao(); }}
           type="button"
         >
           📢 Prospecção Automática
         </button>
         <button
-          className={`btn ${!isProsp ? "btn-primary" : "btn-secondary"}`}
-          onClick={() => {
-            setAbaAtiva("chat-rapido");
-            cancelarEdicao();
-          }}
+          className={`btn ${isAutoReply ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => { setAbaAtiva("auto-reply"); cancelarEdicao(); }}
+          type="button"
+          style={isAutoReply ? {} : { borderColor: "var(--primary)", color: "var(--primary)", background: "var(--primary-light)" }}
+        >
+          🤖 Resposta Automática (Robô / Humano)
+        </button>
+        <button
+          className={`btn ${!isProsp && !isAutoReply ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => { setAbaAtiva("chat-rapido"); cancelarEdicao(); }}
           type="button"
         >
           💬 Respostas Rápidas (Chat)
         </button>
       </div>
 
-      {erro && <div className="alert alert-error">{erro}</div>}
-      {sucesso && <div className="alert alert-success">{sucesso}</div>}
+      {/* ── AUTO-REPLY TAB ── */}
+      {isAutoReply && (
+        <>
+          {autoReplyErro && <div className="alert alert-error">{autoReplyErro}</div>}
+          {autoReplySucesso && <div className="alert alert-success">{autoReplySucesso}</div>}
 
-      <div className="card">
-        <h2>
-          {editingId 
-            ? (isProsp ? "Editar Modelo de Mensagem" : "Editar Resposta Rápida")
-            : (isProsp ? "Criar Novo Modelo" : "Criar Nova Resposta Rápida")}
-        </h2>
-        <form onSubmit={salvarMensagem}>
-          <div className="form-group" style={{ marginBottom: "15px" }}>
-            <label>
-              {isProsp 
-                ? "Nome do Modelo (Identificação Interna)" 
-                : "Título do Atalho (Ex: Preço, Como Funciona, Pix)"}
-            </label>
-            <input 
-              name="nome" 
-              value={form.nome} 
-              onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} 
-              placeholder={isProsp ? "Ex: Primeiro Contato - Padarias" : "Ex: Link de Pagamento"} 
-              required 
-            />
-          </div>
-          <div className="form-group" style={{ marginBottom: "15px" }}>
-            <label>
-              {isProsp 
-                ? "Texto da Mensagem (Suporta variáveis)" 
-                : "Texto da Resposta (Suporta variáveis)"}
-            </label>
-            <textarea 
-              name="texto" 
-              value={form.texto} 
-              onChange={e => setForm(f => ({ ...f, texto: e.target.value }))} 
-              rows="6" 
-              placeholder={isProsp ? "Olá {saudacao}! Vi a empresa {empresa} no..." : "Excelente! Compre no link seguro: {link_kiwify}"} 
-              required 
-            />
-            <small style={{ color: "var(--text-secondary)", marginTop: "4px" }}>
-              {isProsp ? (
-                <>
-                  Variáveis dinâmicas suportadas: <code style={{ color: "var(--primary)" }}>{"{saudacao}"}</code> (Bom dia/Boa tarde/Boa noite), <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code> (Nome do lead), <code style={{ color: "var(--primary)" }}>{"{nicho}"}</code> (Nicho comercial).
-                </>
-              ) : (
-                <>
-                  Variáveis dinâmicas suportadas: <code style={{ color: "var(--primary)" }}>{"{link_kiwify}"}</code> (Link de afiliado do vendedor), <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code> (Nome da empresa do lead).
-                </>
-              )}
-            </small>
-          </div>
-          <div style={{ display: "flex", gap: "10px" }}>
-            <button className="btn btn-primary" type="submit">
-              {editingId ? "Salvar Alterações" : "Salvar Modelo"}
-            </button>
-            {editingId && (
-              <button className="btn btn-secondary" type="button" onClick={cancelarEdicao}>
-                Cancelar Edição
-              </button>
-            )}
-          </div>
-        </form>
-      </div>
-
-      <div className="card">
-        <h2>{isProsp ? "Modelos Salvos" : "Respostas Rápidas Salvas"}</h2>
-        {isProsp && (
-          <p className="subtitle" style={{ fontSize: "0.85rem", marginTop: "-5px", marginBottom: "15px" }}>
-            Ative múltiplos modelos simultaneamente para rotacionar as mensagens de modo aleatório nos disparos automáticos.
-          </p>
-        )}
-        {mensagens.length === 0 ? (
-          <p>Nenhum modelo cadastrado.</p>
-        ) : (
-          mensagens.map(m => (
-            <div className={`msg-item ${isProsp && m.ativa === 1 ? "active" : ""}`} key={m.id}>
-              <div style={{ flex: 1, paddingRight: "15px" }}>
-                <h3 style={{ margin: "0 0 8px 0", color: "var(--text-primary)" }}>
-                  {isProsp ? m.nome : m.titulo} 
-                  {isProsp && m.ativa === 1 && <span className="badge badge-prevenda" style={{ marginLeft: "10px" }}>Ativo em Rotação</span>}
-                </h3>
-                <p style={{ whiteSpace: "pre-wrap", color: "var(--text-secondary)", fontSize: "0.95rem", margin: 0 }}>{m.texto}</p>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignSelf: "center" }}>
-                {isProsp && (
-                  <button 
-                    className={`btn ${m.ativa === 1 ? "btn-secondary" : "btn-primary"}`} 
-                    style={{ padding: "6px 12px", fontSize: "0.85rem", whiteSpace: "nowrap" }} 
-                    onClick={() => ativarMensagem(m.id)}
-                  >
-                    {m.ativa === 1 ? "🔴 Desativar" : "🟢 Ativar"}
-                  </button>
-                )}
-                <button 
-                  className="btn btn-secondary" 
-                  style={{ padding: "6px 12px", fontSize: "0.85rem", whiteSpace: "nowrap", border: "1px solid var(--border-color)" }} 
-                  onClick={() => iniciarEdicao(m)}
-                >
-                  ✏️ Editar
-                </button>
-                <button 
-                  className="btn btn-secondary" 
-                  style={{ padding: "6px 12px", fontSize: "0.85rem", whiteSpace: "nowrap", border: "1px solid rgba(239, 68, 68, 0.3)", color: "var(--danger)" }} 
-                  onClick={() => excluirMensagem(m.id)}
-                >
-                  🗑️ Excluir
-                </button>
+          <div className="card" style={{ borderLeft: "4px solid var(--primary)", marginBottom: "20px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+              <span style={{ fontSize: "1.5rem" }}>ℹ️</span>
+              <div>
+                <strong style={{ color: "var(--text-primary)" }}>Como funciona</strong>
+                <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", margin: "4px 0 0 0", lineHeight: 1.5 }}>
+                  Após o disparo inicial, o sistema monitora o chat por até 4 horas. Quando o lead responde, 
+                  detecta automaticamente se é um <strong>robô/atendimento automático</strong> ou um <strong>humano</strong> 
+                  e envia a mensagem correspondente configurada abaixo.
+                </p>
               </div>
             </div>
-          ))
-        )}
-      </div>
+            <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", marginTop: "12px" }}>
+              <div style={{ flex: 1, minWidth: "200px", padding: "10px 14px", background: "var(--bg-secondary)", borderRadius: "8px", borderLeft: "3px solid #ef4444" }}>
+                <strong style={{ color: "#ef4444", fontSize: "0.85rem" }}>🤖 Critérios de ROBÔ</strong>
+                <ul style={{ margin: "6px 0 0 0", paddingLeft: "16px", fontSize: "0.82rem", color: "var(--text-secondary)", lineHeight: 1.7 }}>
+                  <li>Responde no mesmo minuto do envio</li>
+                  <li>Contém "atendimento automático", "Digite 1", "menu de opções"...</li>
+                  <li>Mensagem muito longa com várias opções</li>
+                </ul>
+              </div>
+              <div style={{ flex: 1, minWidth: "200px", padding: "10px 14px", background: "var(--bg-secondary)", borderRadius: "8px", borderLeft: "3px solid #22c55e" }}>
+                <strong style={{ color: "#22c55e", fontSize: "0.85rem" }}>👤 Critérios de HUMANO</strong>
+                <ul style={{ margin: "6px 0 0 0", paddingLeft: "16px", fontSize: "0.82rem", color: "var(--text-secondary)", lineHeight: 1.7 }}>
+                  <li>Resposta orgânica, curta ou natural</li>
+                  <li>Responde minutos/horas depois</li>
+                  <li>Nenhum indicador de bot detectado</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <form onSubmit={salvarAutoReply} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            {/* BOT MESSAGE */}
+            <div className="card" style={{ borderLeft: "4px solid #ef4444" }}>
+              <label style={{ fontWeight: 600, fontSize: "1rem", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                🤖 Mensagem para <strong style={{ color: "#ef4444" }}>Robô / Atendimento Automático</strong>
+              </label>
+              <textarea
+                rows={5}
+                value={msgRobo}
+                onChange={e => setMsgRobo(e.target.value)}
+                placeholder="Ex: Olá! Percebi que vocês têm um atendimento automático. Gostaria de falar com o responsável para apresentar algo que pode aumentar muito as vendas de vocês. Qual o melhor horário?"
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  background: "var(--bg-secondary)",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "8px",
+                  color: "var(--text-primary)",
+                  fontSize: "0.95rem",
+                  resize: "vertical",
+                  fontFamily: "inherit",
+                  boxSizing: "border-box"
+                }}
+              />
+              <small style={{ color: "var(--text-secondary)", marginTop: "6px", display: "block" }}>
+                Enviada quando detectar resposta automática, menu de opções, bot, horário de funcionamento etc.
+                Variáveis: <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code>
+              </small>
+            </div>
+
+            {/* HUMAN MESSAGE */}
+            <div className="card" style={{ borderLeft: "4px solid #22c55e" }}>
+              <label style={{ fontWeight: 600, fontSize: "1rem", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                👤 Mensagem para <strong style={{ color: "#22c55e" }}>Humano / Responsável</strong>
+              </label>
+              <textarea
+                rows={5}
+                value={msgHumano}
+                onChange={e => setMsgHumano(e.target.value)}
+                placeholder="Ex: Que ótimo falar com você! 😊 Tenho uma proposta que pode aumentar bastante as vendas de vocês. Veja a demonstração personalizada e adquira com desconto especial: {link_kiwify}"
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  background: "var(--bg-secondary)",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "8px",
+                  color: "var(--text-primary)",
+                  fontSize: "0.95rem",
+                  resize: "vertical",
+                  fontFamily: "inherit",
+                  boxSizing: "border-box"
+                }}
+              />
+              <small style={{ color: "var(--text-secondary)", marginTop: "6px", display: "block" }}>
+                Enviada quando uma pessoa real responder. O link de afiliado do vendedor é inserido automaticamente.{" "}
+                Variáveis: <code style={{ color: "#22c55e" }}>{"{link_kiwify}"}</code> (link do vendedor — <strong>obrigatório para vender</strong>),{" "}
+                <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code> (nome do lead).
+              </small>
+
+              {/* Preview badge */}
+              {msgHumano && !msgHumano.includes("{link_kiwify}") && (
+                <div style={{ marginTop: "10px", padding: "8px 12px", background: "rgba(234, 179, 8, 0.1)", border: "1px solid rgba(234, 179, 8, 0.4)", borderRadius: "6px", fontSize: "0.85rem", color: "#ca8a04" }}>
+                  ⚠️ <strong>Dica:</strong> adicione <code>{"{link_kiwify}"}</code> na mensagem para enviar o link de afiliado automaticamente quando um humano responder!
+                </div>
+              )}
+            </div>
+
+            <button className="btn btn-primary" type="submit" style={{ alignSelf: "flex-start", padding: "12px 28px" }}>
+              💾 Salvar Mensagens de Resposta Automática
+            </button>
+          </form>
+        </>
+      )}
+
+      {/* ── PROSPECCAO / CHAT-RAPIDO TABS ── */}
+      {!isAutoReply && (
+        <>
+          {erro && <div className="alert alert-error">{erro}</div>}
+          {sucesso && <div className="alert alert-success">{sucesso}</div>}
+
+          <div className="card">
+            <h2>
+              {editingId 
+                ? (isProsp ? "Editar Modelo de Mensagem" : "Editar Resposta Rápida")
+                : (isProsp ? "Criar Novo Modelo" : "Criar Nova Resposta Rápida")}
+            </h2>
+            <form onSubmit={salvarMensagem}>
+              <div className="form-group" style={{ marginBottom: "15px" }}>
+                <label>
+                  {isProsp 
+                    ? "Nome do Modelo (Identificação Interna)" 
+                    : "Título do Atalho (Ex: Preço, Como Funciona, Pix)"}
+                </label>
+                <input 
+                  name="nome" 
+                  value={form.nome} 
+                  onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} 
+                  placeholder={isProsp ? "Ex: Primeiro Contato - Padarias" : "Ex: Link de Pagamento"} 
+                  required 
+                />
+              </div>
+              {isProsp && (
+                <div className="form-group" style={{ marginBottom: "15px" }}>
+                  <label>🌐 Condição de Envio (Baseado no Site do Lead)</label>
+                  <select
+                    value={form.condicao_site}
+                    onChange={e => setForm(f => ({ ...f, condicao_site: e.target.value }))}
+                    style={{
+                      width: "100%",
+                      padding: "10px 14px",
+                      background: "var(--bg-secondary)",
+                      border: "1px solid var(--border-color)",
+                      borderRadius: "8px",
+                      color: "var(--text-primary)",
+                      fontSize: "0.95rem"
+                    }}
+                  >
+                    <option value="qualquer">Qualquer Lead (COM ou SEM site)</option>
+                    <option value="com_site">Somente Leads que POSSUEM site cadastrado</option>
+                    <option value="sem_site">Somente Leads que NÃO possuem site cadastrado</option>
+                  </select>
+                  <small style={{ color: "var(--text-secondary)" }}>
+                    Filtra automaticamente o modelo ideal de mensagem dependendo se o lead tem ou não um site no Google Maps.
+                  </small>
+                </div>
+              )}
+              <div className="form-group" style={{ marginBottom: "15px" }}>
+                <label>
+                  {isProsp 
+                    ? "Texto da Mensagem (Suporta variáveis)" 
+                    : "Texto da Resposta (Suporta variáveis)"}
+                </label>
+                <textarea 
+                  name="texto" 
+                  value={form.texto} 
+                  onChange={e => setForm(f => ({ ...f, texto: e.target.value }))} 
+                  rows="6" 
+                  placeholder={isProsp ? "Olá {saudacao}! Vi a empresa {empresa} no..." : "Excelente! Compre no link seguro: {link_kiwify}"} 
+                  required 
+                />
+                <small style={{ color: "var(--text-secondary)", marginTop: "4px" }}>
+                  {isProsp ? (
+                    <>
+                      Variáveis dinâmicas suportadas: <code style={{ color: "var(--primary)" }}>{"{saudacao}"}</code> (Bom dia/Boa tarde/Boa noite), <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code> (Nome do lead), <code style={{ color: "var(--primary)" }}>{"{nicho}"}</code> (Nicho comercial).
+                    </>
+                  ) : (
+                    <>
+                      Variáveis dinâmicas suportadas: <code style={{ color: "var(--primary)" }}>{"{link_kiwify}"}</code> (Link de afiliado do vendedor), <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code> (Nome da empresa do lead).
+                    </>
+                  )}
+                </small>
+              </div>
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button className="btn btn-primary" type="submit">
+                  {editingId ? "Salvar Alterações" : "Salvar Modelo"}
+                </button>
+                {editingId && (
+                  <button className="btn btn-secondary" type="button" onClick={cancelarEdicao}>
+                    Cancelar Edição
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+
+          <div className="card">
+            <h2>{isProsp ? "Modelos Salvos" : "Respostas Rápidas Salvas"}</h2>
+            {isProsp && (
+              <p className="subtitle" style={{ fontSize: "0.85rem", marginTop: "-5px", marginBottom: "15px" }}>
+                Ative múltiplos modelos simultaneamente para rotacionar as mensagens de modo aleatório nos disparos automáticos.
+              </p>
+            )}
+            {mensagens.length === 0 ? (
+              <p>Nenhum modelo cadastrado.</p>
+            ) : (
+              mensagens.map(m => (
+                <div className={`msg-item ${isProsp && m.ativa === 1 ? "active" : ""}`} key={m.id}>
+                  <div style={{ flex: 1, paddingRight: "15px" }}>
+                    <h3 style={{ margin: "0 0 8px 0", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      {isProsp ? m.nome : m.titulo} 
+                      {isProsp && m.ativa === 1 && <span className="badge badge-prevenda">Ativo em Rotação</span>}
+                      {isProsp && m.condicao_site === "com_site" && <span className="badge" style={{ background: "rgba(34, 197, 94, 0.15)", color: "#22c55e", border: "1px solid rgba(34, 197, 94, 0.3)", padding: "2px 8px" }}>🌐 Apenas COM Site</span>}
+                      {isProsp && m.condicao_site === "sem_site" && <span className="badge" style={{ background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.3)", padding: "2px 8px" }}>🚫 Apenas SEM Site</span>}
+                    </h3>
+                    <p style={{ whiteSpace: "pre-wrap", color: "var(--text-secondary)", fontSize: "0.95rem", margin: 0 }}>{m.texto}</p>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignSelf: "center" }}>
+                    {isProsp && (
+                      <button 
+                        className={`btn ${m.ativa === 1 ? "btn-secondary" : "btn-primary"}`} 
+                        style={{ padding: "6px 12px", fontSize: "0.85rem", whiteSpace: "nowrap" }} 
+                        onClick={() => ativarMensagem(m.id)}
+                      >
+                        {m.ativa === 1 ? "🔴 Desativar" : "🟢 Ativar"}
+                      </button>
+                    )}
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ padding: "6px 12px", fontSize: "0.85rem", whiteSpace: "nowrap", border: "1px solid var(--border-color)" }} 
+                      onClick={() => iniciarEdicao(m)}
+                    >
+                      ✏️ Editar
+                    </button>
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ padding: "6px 12px", fontSize: "0.85rem", whiteSpace: "nowrap", border: "1px solid rgba(239, 68, 68, 0.3)", color: "var(--danger)" }} 
+                      onClick={() => excluirMensagem(m.id)}
+                    >
+                      🗑️ Excluir
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
     </section>
   );
 }
@@ -2554,12 +2912,20 @@ function VendedorDashboard({ usuarioLogado, setUsuarioLogado }) {
   const [mensagemErro, setMensagemErro] = useState("");
   const [novoLinkKiwify, setNovoLinkKiwify] = useState(usuarioLogado.link_kiwify || "");
   const [salvandoLink, setSalvandoLink] = useState(false);
+  const [novaChavePix, setNovaChavePix] = useState(usuarioLogado.pix || "");
+  const [salvandoPix, setSalvandoPix] = useState(false);
 
   useEffect(() => {
     if (usuarioLogado.link_kiwify) {
       setNovoLinkKiwify(usuarioLogado.link_kiwify);
     }
   }, [usuarioLogado.link_kiwify]);
+
+  useEffect(() => {
+    if (usuarioLogado.pix) {
+      setNovaChavePix(usuarioLogado.pix);
+    }
+  }, [usuarioLogado.pix]);
 
   async function salvarLinkKiwify() {
     if (!novoLinkKiwify.trim()) {
@@ -2588,6 +2954,36 @@ function VendedorDashboard({ usuarioLogado, setUsuarioLogado }) {
       setMensagemErro("Erro de comunicação com o servidor.");
     } finally {
       setSalvandoLink(false);
+    }
+  }
+
+  async function salvarChavePix() {
+    if (!novaChavePix.trim()) {
+      setMensagemErro("Por favor, informe uma chave PIX válida.");
+      return;
+    }
+    setSalvandoPix(true);
+    setMensagemSucesso("");
+    setMensagemErro("");
+    try {
+      const res = await fetch(`${API_URL}/vendedores/${usuarioLogado.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pix: novaChavePix.trim() })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const updatedUser = { ...usuarioLogado, pix: novaChavePix.trim() };
+        localStorage.setItem("usuarioLogado", JSON.stringify(updatedUser));
+        setUsuarioLogado(updatedUser);
+        setMensagemSucesso("Chave PIX cadastrada com sucesso!");
+      } else {
+        setMensagemErro(data.error || "Erro ao atualizar chave PIX.");
+      }
+    } catch (e) {
+      setMensagemErro("Erro de comunicação com o servidor.");
+    } finally {
+      setSalvandoPix(false);
     }
   }
 
@@ -2894,16 +3290,18 @@ function VendedorDashboard({ usuarioLogado, setUsuarioLogado }) {
       )}
 
       {/* Modo Gerente - Gerente Ativo */}
-      {stats.eh_gerente === 1 && (
+      {(stats.eh_gerente === 1 || stats.eh_gerente === 2) && (
         <div style={{ marginTop: "24px" }}>
           {/* Link de Convite de Gerente */}
           <div className="card" style={{ background: "linear-gradient(135deg, rgba(217, 119, 6, 0.05) 0%, rgba(251, 191, 36, 0.05) 100%)", border: "1px solid rgba(251, 191, 36, 0.25)" }}>
             <h2 style={{ margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: "8px" }}>
               💼 Meu Link de Indicação (Recrutar Vendedores)
-              <span className="badge" style={{ backgroundColor: "rgba(217, 119, 6, 0.15)", color: "var(--primary)", fontSize: "0.8rem", padding: "4px 8px" }}>Modo Gerente Ativo</span>
+              <span className="badge" style={{ backgroundColor: "rgba(217, 119, 6, 0.15)", color: "var(--primary)", fontSize: "0.8rem", padding: "4px 8px" }}>
+                {stats.eh_gerente === 2 ? "Modo Gerente Pro Ativo" : "Modo Gerente Base Ativo"}
+              </span>
             </h2>
             <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem", marginBottom: "15px" }}>
-              Compartilhe o link abaixo para cadastrar vendedores na sua equipe. Toda vez que um indicado fizer uma venda que for aprovada pelo administrador, você ganha <strong>R$ 100,00</strong> na hora.
+              Compartilhe o link abaixo para cadastrar vendedores na sua equipe. Toda vez que um indicado fizer uma venda que for aprovada pelo administrador, você ganha <strong>{stats.eh_gerente === 2 ? "R$ 300,00" : "R$ 100,00"}</strong> na hora.
             </p>
             
             <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
@@ -2936,6 +3334,42 @@ function VendedorDashboard({ usuarioLogado, setUsuarioLogado }) {
             </div>
           </div>
 
+          {/* Configuração de PIX do Gerente */}
+          <div className="card" style={{ marginTop: "24px", background: "linear-gradient(135deg, rgba(16, 185, 129, 0.04) 0%, rgba(52, 211, 153, 0.04) 100%)", border: "1px solid rgba(52, 211, 153, 0.2)" }}>
+            <h2 style={{ margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: "8px" }}>
+              💸 Minha Chave PIX (Para Recebimento de Comissões)
+            </h2>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem", marginBottom: "15px" }}>
+              Cadastre sua chave PIX para que o administrador possa transferir suas comissões passivas de equipe acumuladas.
+            </p>
+            
+            <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+              <input 
+                type="text" 
+                placeholder="Insira sua chave PIX (CPF, Celular, E-mail ou Chave Aleatória)" 
+                value={novaChavePix}
+                onChange={(e) => setNovaChavePix(e.target.value)}
+                style={{ 
+                  flexGrow: 1, 
+                  padding: "12px", 
+                  borderRadius: "8px", 
+                  border: "1px solid var(--border-color)", 
+                  background: "var(--bg-secondary)", 
+                  color: "#fff",
+                  fontSize: "0.95rem"
+                }}
+              />
+              <button 
+                className="btn btn-primary" 
+                style={{ margin: 0, padding: "12px 24px", background: "linear-gradient(135deg, #10b981 0%, #059669 100%)", border: "none", boxShadow: "0 4px 12px rgba(16, 185, 129, 0.2)" }}
+                disabled={salvandoPix}
+                onClick={salvarChavePix}
+              >
+                {salvandoPix ? "Salvando..." : "Salvar Chave PIX"}
+              </button>
+            </div>
+          </div>
+
           {/* Grid de Estatísticas do Gerente */}
           <div className="dashboard-grid" style={{ marginTop: "24px" }}>
             <div className="stat-card success" style={{ borderLeft: "4px solid var(--primary)", background: "rgba(217, 119, 6, 0.02)" }}>
@@ -2944,7 +3378,7 @@ function VendedorDashboard({ usuarioLogado, setUsuarioLogado }) {
                 {stats.comissao_gerente_acumulada.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
               </span>
               <span className="stat-desc" style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "4px" }}>
-                Ganhos de comissão passiva (R$ 100/venda)
+                Ganhos de comissão passiva ({stats.eh_gerente === 2 ? "R$ 300" : "R$ 100"}/venda)
               </span>
             </div>
 
@@ -2994,7 +3428,7 @@ function VendedorDashboard({ usuarioLogado, setUsuarioLogado }) {
                         <td>{new Date(ind.criado_em).toLocaleDateString("pt-BR")}</td>
                         <td style={{ textAlign: "center", fontWeight: "bold" }}>{ind.vendas_aprovadas}</td>
                         <td style={{ textAlign: "right", color: "var(--primary)", fontWeight: "bold" }}>
-                          {(ind.vendas_aprovadas * 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                          {(ind.vendas_aprovadas * (stats.eh_gerente === 2 ? 300 : 100)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                         </td>
                       </tr>
                     ))}
@@ -3156,8 +3590,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
   const [modalLead, setModalLead] = useState(null);
   const [obsPreVenda, setObsPreVenda] = useState("");
 
-  // Chat Drawer State
-  const [chatLead, setChatLead] = useState(null);
+
 
 
 
@@ -3236,37 +3669,13 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
       return;
     }
 
-    const isTeste = !usuarioLogado.opcoes_chip || usuarioLogado.opcoes_chip === 'pendente';
-    const limitVal = isTeste ? 10 : (limiteDisparo ? parseInt(limiteDisparo, 10) : null);
-
     try {
-      // Auto-collect leads if active reserved queue is empty and capacity is available
-      const reservadoCount = leads.filter(l => l.status === "reservado").length;
-      if (reservadoCount === 0 && stats.capacidade_hoje > 0) {
-        console.log("Nenhum lead reservado disponível. Coletando novos leads automaticamente...");
-        const resColeta = await fetch(`${API_URL}/vendedores/${usuarioLogado.id}/coletar-leads`, {
-          method: "POST"
-        });
-        const dataColeta = await resColeta.json();
-        
-        if (!resColeta.ok && dataColeta.error && !dataColeta.error.includes("atingiu seu limite")) {
-          setErro(dataColeta.error || "Erro ao coletar novos leads.");
-          return;
-        }
-
-        // Reload leads list and stats after collecting
-        const resLeads = await fetch(`${API_URL}/leads/vendedor/${usuarioLogado.id}`);
-        const dataLeads = await resLeads.json();
-        if (dataLeads.ok) {
-          setLeads(dataLeads.leads);
-        }
-        await carregarStats();
-      }
-
+      // O servidor vai raspar os leads em tempo real e disparar mensagem para cada um.
+      // Não é mais necessário coletar leads manualmente antes.
       const res = await fetch(`${API_URL}/whatsapp/disparar/${usuarioLogado.id}`, { 
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limite: limitVal > 0 ? limitVal : null })
+        body: JSON.stringify({})
       });
       const data = await res.json();
 
@@ -3276,11 +3685,11 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
           setShowTestNotice(true);
         }
         setIsSending(true);
-        // Reload leads list after a short delay
+        // Recarregar leads depois de um tempo para refletir os novos
         setTimeout(() => {
           carregarLeads();
           carregarStats();
-        }, 3000);
+        }, 5000);
       } else {
         setErro(data.error);
       }
@@ -3299,41 +3708,22 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
     }
 
     try {
-      // 1. Coletar leads de teste (limite 10)
-      const resColeta = await fetch(`${API_URL}/vendedores/${usuarioLogado.id}/coletar-leads`, {
-        method: "POST"
-      });
-      const dataColeta = await resColeta.json();
-      
-      if (!resColeta.ok && dataColeta.error && !dataColeta.error.includes("atingiu seu limite")) {
-        setErro(dataColeta.error || "Erro ao coletar leads de teste.");
-        return;
-      }
-
-      // 2. Carregar leads
-      const resLeads = await fetch(`${API_URL}/leads/vendedor/${usuarioLogado.id}`);
-      const dataLeads = await resLeads.json();
-      if (dataLeads.ok) {
-        setLeads(dataLeads.leads);
-      }
-
-      // 3. Disparar para exatamente 10 leads
+      // O servidor raspa e dispara em pipeline. Não precisamos coletar antes.
       const resDisparo = await fetch(`${API_URL}/whatsapp/disparar/${usuarioLogado.id}`, { 
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limite: 10 })
+        body: JSON.stringify({})
       });
       const dataDisparo = await resDisparo.json();
 
       if (resDisparo.ok) {
-        setSucesso(dataDisparo.message || "Disparo de teste iniciado!");
+        setSucesso(dataDisparo.message || "Disparo de teste iniciado! O sistema vai raspar e enviar mensagens automaticamente.");
         setShowTestNotice(true);
         setIsSending(true);
-        // Recarregar após um curto delay para atualizar a tela
         setTimeout(() => {
           carregarLeads();
           checarStatusWhatsapp();
-        }, 3000);
+        }, 5000);
       } else {
         setErro(dataDisparo.error);
       }
@@ -3642,64 +4032,22 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
       )}
 
       <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", flexWrap: "wrap" }}>
-        {!isTeste ? (
-          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-            <div className="form-group" style={{ minWidth: "220px", margin: 0 }}>
-              <select value={statusFiltro} onChange={e => setStatusFiltro(e.target.value)}>
-                <option value="">Todos os status</option>
-                {statusUnicos.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <button 
-              className="btn btn-secondary" 
-              onClick={coletarLeads}
-              style={{ height: "42px", display: "flex", alignItems: "center", gap: "6px" }}
-            >
-              📥 Coletar Novos Leads
-            </button>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <div className="form-group" style={{ minWidth: "220px", margin: 0 }}>
+            <select value={statusFiltro} onChange={e => setStatusFiltro(e.target.value)}>
+              <option value="">Todos os status</option>
+              {statusUnicos.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
           </div>
-        ) : (
-          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          {isTeste && (
             <span className="badge badge-success pulse" style={{ padding: "6px 12px", fontSize: "0.85rem", borderRadius: "6px", textTransform: "none", background: "var(--primary-light)", color: "var(--primary)", border: "1px solid var(--primary)", margin: 0 }}>
-              🎯 Modo de Teste: Envio de 10 Leads
+              🎯 Modo de Teste: Limite de 10 Leads
             </span>
-            {stats.capacidade_hoje > 0 && (
-              <button 
-                className="btn btn-secondary" 
-                onClick={coletarLeads}
-                style={{ height: "42px", display: "flex", alignItems: "center", gap: "6px", margin: 0 }}
-              >
-                📥 Coletar Reposição ({stats.capacidade_hoje})
-              </button>
-            )}
-          </div>
-        )}
+          )}
+        </div>
 
         <div style={{ display: "flex", gap: "15px", alignItems: "center", flexWrap: "wrap" }}>
-          {!isTeste && (
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <label style={{ fontSize: "0.85rem", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                Quantidade a disparar:
-              </label>
-              <input 
-                type="number" 
-                min="1" 
-                max="100" 
-                value={limiteDisparo} 
-                onChange={e => setLimiteDisparo(e.target.value)} 
-                placeholder="Tudo" 
-                style={{ 
-                  width: "80px", 
-                  padding: "8px 12px", 
-                  border: "1px solid var(--border-color)", 
-                  borderRadius: "8px", 
-                  background: "var(--bg-secondary)", 
-                  color: "var(--text-primary)",
-                  margin: 0
-                }}
-              />
-            </div>
-          )}
+          {/* Limite agora é configurado pelo admin — sem campo manual aqui */}
           {isSending ? (
             <button 
               className="btn btn-danger pulse" 
@@ -3844,19 +4192,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
                           </button>
                         )}
 
-                        <button 
-                          className="btn btn-primary" 
-                          style={{ 
-                            padding: "6px 12px", 
-                            fontSize: "0.85rem",
-                            background: "linear-gradient(135deg, #fbbf24 0%, #d97706 100%)",
-                            border: "none",
-                            color: "white"
-                          }} 
-                          onClick={() => setChatLead(l)}
-                        >
-                          💬 Conversar
-                        </button>
+
 
 
                       </div>
@@ -3900,13 +4236,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
         </div>
       )}
 
-      {/* Chat Drawer */}
-      <ChatDrawer 
-        lead={chatLead} 
-        vendedorId={usuarioLogado.id} 
-        onClose={() => setChatLead(null)} 
-        onMessageSent={carregarLeads}
-      />
+
 
 
 
@@ -4351,6 +4681,7 @@ function CadastroVendedor({ setPagina, loginSucesso }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
+          nome: form.nome.toUpperCase().trim(),
           limite_diario: 25,
           indicado_por_id: indicadoPorId
         })
@@ -4384,7 +4715,7 @@ function CadastroVendedor({ setPagina, loginSucesso }) {
 
         <div className="form-group" style={{ marginBottom: "15px" }}>
           <label>Seu Nome</label>
-          <input name="nome" type="text" value={form.nome} onChange={alterarCampo} required placeholder="Ex: Marc Thay" />
+          <input name="nome" type="text" value={form.nome} onChange={alterarCampo} required placeholder="Ex: João da Silva" />
         </div>
 
         <div className="form-group" style={{ marginBottom: "15px" }}>

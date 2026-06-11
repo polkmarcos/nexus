@@ -5,7 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import db from "./db.js";
-import { scrapeGoogleMaps } from "./scraper.js";
+import { scrapeGoogleMaps, scrapeGoogleMapsParaDisparo } from "./scraper.js";
 import { 
   conectarWhatsapp, 
   dispararMensagens, 
@@ -34,6 +34,16 @@ app.use((req, res, next) => {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+/**
+ * Envia mensagem inicial para um único lead usando a sessão WhatsApp do vendedor.
+ * Após o envio, atualiza o status do lead para 'Mensagem enviada'.
+ */
+async function dispararMensagemParaLead(vendedorId, lead, textoTemplate) {
+  // dispararMensagens aceita array de leads — passamos apenas este lead
+  const resultados = await dispararMensagens(vendedorId, [textoTemplate], [lead]);
+  return resultados;
 }
 
 function validarCPF(cpf) {
@@ -392,6 +402,7 @@ app.post("/vendedores", (req, res) => {
       cpf = "",
       link_kiwify = "",
       indicado_por_id = null,
+      eh_gerente = 0,
     } = req.body;
 
     if (!nome || !email || !senha || !cpf) {
@@ -445,7 +456,7 @@ app.post("/vendedores", (req, res) => {
 
     const vendedor = {
       id: randomUUID(),
-      nome,
+      nome: nome.toUpperCase().trim(),
       email,
       senha,
       whatsapp,
@@ -456,7 +467,7 @@ app.post("/vendedores", (req, res) => {
       cpf,
       link_kiwify,
       indicado_por_id: indicado_por_id || null,
-      eh_gerente: 0,
+      eh_gerente: Number(eh_gerente) || 0,
       criado_em: now,
     };
 
@@ -497,9 +508,37 @@ app.get("/vendedores", (req, res) => {
       .prepare("SELECT * FROM vendedores ORDER BY criado_em DESC")
       .all();
 
+    const vendedoresComComissao = vendedores.map(v => {
+      let comissaoGerente = 0;
+      let indicadosCount = 0;
+      let indicadosVendasCount = 0;
+
+      const ehG = v.eh_gerente || 0;
+      if (ehG === 1 || ehG === 2) {
+        indicadosCount = db.prepare("SELECT COUNT(*) as total FROM vendedores WHERE indicado_por_id = ?").get(v.id).total;
+        
+        indicadosVendasCount = db.prepare(`
+          SELECT COUNT(*) as total 
+          FROM pre_vendas p
+          JOIN vendedores ind ON p.vendedor_id = ind.id
+          WHERE ind.indicado_por_id = ? AND p.status = 'Aprovada'
+        `).get(v.id).total;
+
+        const valorPorVenda = ehG === 2 ? 300 : 100;
+        comissaoGerente = indicadosVendasCount * valorPorVenda;
+      }
+
+      return {
+        ...v,
+        comissao_gerente: comissaoGerente,
+        indicados_count: indicadosCount,
+        indicados_vendas_count: indicadosVendasCount
+      };
+    });
+
     res.json({
       ok: true,
-      vendedores,
+      vendedores: vendedoresComComissao,
     });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
@@ -537,14 +576,14 @@ app.get("/vendedores/fila/:id", (req, res) => {
 app.put("/vendedores/:id", (req, res) => {
   try {
     const { id } = req.params;
-    const { nome, email, senha, whatsapp, limite_diario, ativo, cpf, link_kiwify, eh_gerente, indicado_por_id } = req.body;
+    const { nome, email, senha, whatsapp, limite_diario, ativo, cpf, link_kiwify, eh_gerente, indicado_por_id, pix } = req.body;
     
     const vendedorExistente = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
     if (!vendedorExistente) {
       return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
     }
 
-    const nomeFinal = nome !== undefined ? nome : vendedorExistente.nome;
+    const nomeFinal = nome !== undefined ? nome.toUpperCase().trim() : vendedorExistente.nome;
     const emailFinal = email !== undefined ? email : vendedorExistente.email;
     const senhaFinal = senha !== undefined ? senha : vendedorExistente.senha;
     const whatsappFinal = whatsapp !== undefined ? whatsapp : vendedorExistente.whatsapp;
@@ -554,6 +593,7 @@ app.put("/vendedores/:id", (req, res) => {
     const linkKiwifyFinal = link_kiwify !== undefined ? link_kiwify : vendedorExistente.link_kiwify;
     const ehGerenteFinal = eh_gerente !== undefined ? Number(eh_gerente) : (vendedorExistente.eh_gerente || 0);
     const indicadoPorIdFinal = indicado_por_id !== undefined ? indicado_por_id : (vendedorExistente.indicado_por_id || null);
+    const pixFinal = pix !== undefined ? pix : (vendedorExistente.pix || null);
     
     if (senha !== undefined && senha.length < 6) {
       return res.status(400).json({ ok: false, error: "A senha de acesso deve ter no mínimo 6 caracteres." });
@@ -575,9 +615,9 @@ app.put("/vendedores/:id", (req, res) => {
 
     db.prepare(`
       UPDATE vendedores 
-      SET nome = ?, email = ?, senha = ?, whatsapp = ?, limite_diario = ?, ativo = ?, fila_timestamp = ?, cpf = ?, link_kiwify = ?, eh_gerente = ?, indicado_por_id = ?
+      SET nome = ?, email = ?, senha = ?, whatsapp = ?, limite_diario = ?, ativo = ?, fila_timestamp = ?, cpf = ?, link_kiwify = ?, eh_gerente = ?, indicado_por_id = ?, pix = ?
       WHERE id = ?
-    `).run(nomeFinal, emailFinal, senhaFinal, whatsappFinal, limiteFinal, ativoFinal, filaTimestampFinal, cpfFinal, linkKiwifyFinal, ehGerenteFinal, indicadoPorIdFinal, id);
+    `).run(nomeFinal, emailFinal, senhaFinal, whatsappFinal, limiteFinal, ativoFinal, filaTimestampFinal, cpfFinal, linkKiwifyFinal, ehGerenteFinal, indicadoPorIdFinal, pixFinal, id);
     
     // Process queue after change
     processarFilaVendedores();
@@ -685,7 +725,7 @@ app.get("/vendedores/:id/dashboard-stats", (req, res) => {
     let comissaoGerenteAcumulada = 0;
     let indicadosList = [];
 
-    if (ehGerente === 1) {
+    if (ehGerente === 1 || ehGerente === 2) {
       indicadosCount = db.prepare("SELECT COUNT(*) as total FROM vendedores WHERE indicado_por_id = ?").get(id).total;
       
       indicadosSalesCount = db.prepare(`
@@ -695,7 +735,8 @@ app.get("/vendedores/:id/dashboard-stats", (req, res) => {
         WHERE v.indicado_por_id = ? AND p.status = 'Aprovada'
       `).get(id).total;
 
-      comissaoGerenteAcumulada = indicadosSalesCount * 100;
+      const valorPorVenda = ehGerente === 2 ? 300 : 100;
+      comissaoGerenteAcumulada = indicadosSalesCount * valorPorVenda;
 
       indicadosList = db.prepare(`
         SELECT 
@@ -749,7 +790,7 @@ app.post("/vendedores/:id/ativar-gerente", (req, res) => {
       return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
     }
 
-    if (vendedor.eh_gerente === 1) {
+    if (vendedor.eh_gerente === 1 || vendedor.eh_gerente === 2) {
       return res.status(400).json({ ok: false, error: "Modo gerente já está ativo." });
     }
 
@@ -872,7 +913,18 @@ app.get("/admin/estoque-leads", (req, res) => {
 
 app.put("/configuracoes", (req, res) => {
   try {
-    const { limite_vendedores_ativos, senha_administrador, comissao_venda, preco_produto, link_afiliacao_kiwify } = req.body;
+    const {
+      limite_vendedores_ativos,
+      senha_administrador,
+      comissao_venda,
+      preco_produto,
+      link_afiliacao_kiwify,
+      query_disparo,
+      nicho_disparo,
+      limite_disparo,
+      mensagem_resposta_robo,
+      mensagem_resposta_humano
+    } = req.body;
     
     db.transaction(() => {
       if (limite_vendedores_ativos !== undefined) {
@@ -898,6 +950,31 @@ app.put("/configuracoes", (req, res) => {
       if (link_afiliacao_kiwify !== undefined) {
         db.prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'link_afiliacao_kiwify'")
           .run(String(link_afiliacao_kiwify).trim());
+      }
+
+      if (query_disparo !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('query_disparo', ?)")
+          .run(String(query_disparo).trim());
+      }
+
+      if (nicho_disparo !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('nicho_disparo', ?)")
+          .run(String(nicho_disparo).trim());
+      }
+
+      if (limite_disparo !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('limite_disparo', ?)")
+          .run(String(Number(limite_disparo) || 20));
+      }
+
+      if (mensagem_resposta_robo !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('mensagem_resposta_robo', ?)")
+          .run(String(mensagem_resposta_robo));
+      }
+
+      if (mensagem_resposta_humano !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('mensagem_resposta_humano', ?)")
+          .run(String(mensagem_resposta_humano));
       }
     })();
     
@@ -1191,10 +1268,25 @@ app.get("/leads", (req, res) => {
 app.delete("/leads/limpar", (req, res) => {
   try {
     db.transaction(() => {
+      db.prepare("DELETE FROM mensagens_chat").run();
       db.prepare("DELETE FROM pre_vendas").run();
       db.prepare("DELETE FROM leads").run();
     })();
-    res.json({ ok: true, message: "Todos os leads e pré-vendas foram excluídos com sucesso." });
+    res.json({ ok: true, message: "Todos os leads, pré-vendas e históricos de conversa foram excluídos com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.delete("/leads/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    db.transaction(() => {
+      db.prepare("DELETE FROM mensagens_chat WHERE lead_id = ?").run(id);
+      db.prepare("DELETE FROM pre_vendas WHERE lead_id = ?").run(id);
+      db.prepare("DELETE FROM leads WHERE id = ?").run(id);
+    })();
+    res.json({ ok: true, message: "Lead excluído com sucesso." });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
@@ -1394,7 +1486,7 @@ app.post("/distribuir-leads", (req, res) => {
 // MENSAGENS (TEMPLATES)
 app.post("/mensagens", (req, res) => {
   try {
-    const { nome, texto, ativa = 1 } = req.body;
+    const { nome, texto, ativa = 1, condicao_site = 'qualquer' } = req.body;
     if (!nome || !texto) {
       return res.status(400).json({ ok: false, error: "Nome e Texto são obrigatórios." });
     }
@@ -1403,13 +1495,13 @@ app.post("/mensagens", (req, res) => {
     const now = nowIso();
 
     db.prepare(`
-      INSERT INTO mensagens (id, nome, texto, ativa, criado_em)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, nome, texto, ativa, now);
+      INSERT INTO mensagens (id, nome, texto, ativa, condicao_site, criado_em)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, nome, texto, ativa, condicao_site, now);
 
     res.json({
       ok: true,
-      mensagem: { id, nome, texto, ativa, criado_em: now }
+      mensagem: { id, nome, texto, ativa, condicao_site, criado_em: now }
     });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
@@ -1450,7 +1542,7 @@ app.put("/mensagens/:id/ativar", (req, res) => {
 app.put("/mensagens/:id", (req, res) => {
   try {
     const { id } = req.params;
-    const { nome, texto, ativa } = req.body;
+    const { nome, texto, ativa, condicao_site } = req.body;
 
     const msgExistente = db.prepare("SELECT * FROM mensagens WHERE id = ?").get(id);
     if (!msgExistente) {
@@ -1460,14 +1552,15 @@ app.put("/mensagens/:id", (req, res) => {
     const nomeFinal = nome !== undefined ? nome : msgExistente.nome;
     const textoFinal = texto !== undefined ? texto : msgExistente.texto;
     const ativaFinal = ativa !== undefined ? Number(ativa) : msgExistente.ativa;
+    const condicaoSiteFinal = condicao_site !== undefined ? condicao_site : msgExistente.condicao_site;
 
     db.prepare(`
       UPDATE mensagens 
-      SET nome = ?, texto = ?, ativa = ?
+      SET nome = ?, texto = ?, ativa = ?, condicao_site = ?
       WHERE id = ?
-    `).run(nomeFinal, textoFinal, ativaFinal, id);
+    `).run(nomeFinal, textoFinal, ativaFinal, condicaoSiteFinal, id);
 
-    res.json({ ok: true, message: "Modelo de mensagem atualizado com sucesso." });
+    res.json({ ok: true, message: "Modelo de mensagem updated successfully." });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
@@ -1594,38 +1687,160 @@ app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Nenhum modelo de mensagem está ATIVO no painel do administrador. Vá no Admin -> Modelos de Mensagem e ative pelo menos um modelo (botão verde '🟢 Ativar')." });
     }
 
-    const { limite } = req.body || {};
-
-    let query = `
-      SELECT * FROM leads 
-      WHERE vendedor_id = ? AND status = 'reservado'
-      ORDER BY criado_em ASC
-    `;
-    const params = [vendedorId];
-    if (limite && Number(limite) > 0) {
-      query += " LIMIT ?";
-      params.push(Number(limite));
+    // Check seller limits
+    const vendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(vendedorId);
+    if (!vendedor) {
+      return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
+    }
+    if (vendedor.ativo === 0) {
+      return res.status(400).json({ ok: false, error: "Sua conta está inativa na fila de espera. Conecte seu WhatsApp para ser ativado." });
     }
 
-    const leads = db.prepare(query).all(...params);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartIso = todayStart.toISOString();
 
-    if (leads.length === 0) {
-      return res.json({ ok: true, message: "Nenhum lead com status 'reservado' para enviar." });
+    // Check how many leads were already assigned to him today
+    const countHoje = db.prepare(`
+      SELECT COUNT(*) as total FROM leads 
+      WHERE vendedor_id = ? AND (
+        status = 'reservado' 
+        OR (status != 'disponivel' AND status != 'Vácuo' AND atualizado_em >= ?)
+      )
+    `).get(vendedorId, todayStartIso).total;
+
+    let limiteDiario = 25;
+    if (vendedor.suspensao_ate && new Date(vendedor.suspensao_ate) > new Date()) {
+      return res.status(400).json({ ok: false, error: "Sua conta está suspensa temporariamente para aquecimento do chip novo por 14 dias." });
+    } else if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
+      limiteDiario = 10;
+    } else {
+      limiteDiario = vendedor.limite_diario;
     }
 
-    // Run message sending loop in the background, rotating active messages
-    dispararMensagens(vendedorId, msgsAtivas.map(m => m.texto), leads)
-      .then((results) => {
-        console.log(`Disparos para vendedor ${vendedorId} concluídos:`, results);
-      })
-      .catch((err) => {
-        console.error(`Erro nos disparos para vendedor ${vendedorId}:`, err);
-      });
+    const capacidade = Math.max(0, limiteDiario - countHoje);
+    if (capacidade <= 0) {
+      if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
+        return res.status(400).json({ ok: false, error: "Você já atingiu seu limite diário da Fase de Teste (10 leads). Escolha a opção de chip no seu painel para liberar o limite de 25 leads diários." });
+      }
+      return res.status(400).json({ ok: false, error: `Você já atingiu seu limite diário de ${vendedor.limite_diario} leads para hoje.` });
+    }
 
+    // Buscar configurações de disparo definidas pelo admin
+    const nichoDisparoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'nicho_disparo'").get();
+    const limiteDisparoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'limite_disparo'").get();
+
+    const nichoDisparo = nichoDisparoRow?.valor || "Geral";
+    const limiteDisparo = parseInt(limiteDisparoRow?.valor || "20", 10);
+
+    const totalARodar = Math.min(capacidade, limiteDisparo);
+
+    // Marcar que está em disparo para evitar conflito com o monitor de sessão
+    session.abortSending = false;
+    session.isSending = true;
+
+    // Responder imediatamente ao frontend — o pipeline roda em background
     res.json({
       ok: true,
-      message: `Disparo automático iniciado para ${leads.length} leads (com ${msgsAtivas.length} modelos ativos em rotação).`
+      message: `Disparo iniciado: buscando leads disponíveis no banco (nicho: ${nichoDisparo}, limite desta sessão: ${totalARodar}). As mensagens serão enviadas sequencialmente.`
     });
+
+    // Iniciar loop de envio em background
+    (async () => {
+      let templateIndex = 0;
+      let totalEnviados = 0;
+
+      console.log(`[Disparo] Iniciando processamento em background para ${vendedor.nome}. Capacidade restante: ${capacidade}. Limite da sessão: ${totalARodar}.`);
+
+      for (let i = 0; i < totalARodar; i++) {
+        if (session.abortSending) {
+          console.log(`[Disparo] Cancelamento solicitado pelo vendedor.`);
+          break;
+        }
+        if (session.status !== "connected") {
+          console.log(`[Disparo] Sessão WhatsApp desconectada. Cancelando envio restante.`);
+          break;
+        }
+
+        // Buscar um lead disponível no banco de dados
+        let lead;
+        try {
+          if (nichoDisparo && nichoDisparo !== "Geral") {
+            lead = db.prepare(`
+              SELECT * FROM leads 
+              WHERE status = 'disponivel' AND vendedor_id IS NULL AND nicho = ?
+              ORDER BY criado_em ASC LIMIT 1
+            `).get(nichoDisparo);
+          } else {
+            lead = db.prepare(`
+              SELECT * FROM leads 
+              WHERE status = 'disponivel' AND vendedor_id IS NULL
+              ORDER BY criado_em ASC LIMIT 1
+            `).get();
+          }
+        } catch (dbErr) {
+          console.error(`[Disparo] Erro ao buscar lead disponível:`, dbErr.message);
+          break;
+        }
+
+        if (!lead) {
+          console.log(`[Disparo] Nenhum lead disponível restando no banco de dados para o nicho "${nichoDisparo}".`);
+          break;
+        }
+
+        // Reservar o lead para este vendedor imediatamente
+        const nowIsoStr = new Date().toISOString();
+        try {
+          db.prepare(`
+            UPDATE leads 
+            SET vendedor_id = ?, status = 'reservado', assigned_to = ?, assigned_at = ?, atualizado_em = ?
+            WHERE id = ?
+          `).run(vendedorId, vendedorId, nowIsoStr, nowIsoStr, nowIsoStr, lead.id);
+          
+          // Atualizar o objeto lead local para os próximos passos
+          lead.vendedor_id = vendedorId;
+          lead.status = 'reservado';
+        } catch (reserveErr) {
+          console.error(`[Disparo] Erro ao reservar lead ${lead.empresa}:`, reserveErr.message);
+          continue; // tentar o próximo
+        }
+
+        try {
+          // Filtrar mensagens ativas que combinam com a condição do site do lead
+          const temSite = !!(lead.site && lead.site.trim() !== "" && lead.site !== "Não Informado" && lead.site !== "Não Informada");
+          
+          const msgsFiltradas = msgsAtivas.filter(m => {
+            const cond = m.condicao_site || 'qualquer';
+            if (cond === 'com_site') return temSite;
+            if (cond === 'sem_site') return !temSite;
+            return true; // qualquer
+          });
+
+          const msgsParaUsar = msgsFiltradas.length > 0 ? msgsFiltradas : msgsAtivas;
+
+          // Usar templates em rotação dentro da lista filtrada
+          const textoTemplate = msgsParaUsar[templateIndex % msgsParaUsar.length].texto;
+          templateIndex++;
+
+          console.log(`[Disparo] (${i + 1}/${totalARodar}) Enviando para: ${lead.empresa} (${lead.telefone}) [Site: ${lead.site || 'Nenhum'}]`);
+          await dispararMensagemParaLead(vendedorId, lead, textoTemplate);
+          totalEnviados++;
+        } catch (err) {
+          console.error(`[Disparo] Erro ao disparar para ${lead.empresa}:`, err.message);
+        }
+
+        // Intervalo aleatório entre envios (5 a 15 segundos)
+        const delay = Math.floor(Math.random() * 10000) + 5000;
+        await new Promise(r => setTimeout(r, delay));
+      }
+
+      console.log(`[Disparo] Processamento concluído. Total enviados: ${totalEnviados}`);
+      session.isSending = false;
+    })().catch(err => {
+      console.error(`[Disparo] Erro geral no loop em background:`, err.message);
+      session.isSending = false;
+    });
+
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }

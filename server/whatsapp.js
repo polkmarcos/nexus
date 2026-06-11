@@ -7,6 +7,10 @@ import db from "./db.js";
 // Format: { sellerId => { browser, context, page, status, qrCode, monitorPromise } }
 export const sessions = new Map();
 
+// Tracks leads awaiting auto-reply after initial message was sent.
+// Format: { leadId => { vendedorId, sentAt, resolved } }
+const leadMonitorQueue = new Map();
+
 const VARIANTES_MENSAGENS = [
   "Oi, é da {empresa}, tudo bem, sabe eu estava vendo aqui e notei que vocês podem aumentar as vendas com um site próprio otimizado, criei uma demonstração, posso te mandar?",
   "Opa, é da {empresa}, tudo joia, então eu estava dando uma olhada e vi que dá pra puxar muito mais pedido no delivery com um site próprio otimizado, fiz uma demo aqui, posso te enviar?",
@@ -649,6 +653,297 @@ async function scanUnreadMessages(vendedorId, page) {
 }
 
 /**
+ * Classifies whether a WhatsApp reply is from a bot or a human.
+ *
+ * @param {string} texto - The reply message text
+ * @param {number} sentAt - Timestamp (ms) when the initial message was sent
+ * @param {string|null} replyTimestampStr - WhatsApp displayed time string e.g. "[10:30, 11/06/2026]"
+ * @returns {'robo'|'humano'}
+ */
+function classificarResposta(texto, sentAt, replyTimestampStr) {
+  const lower = texto.toLowerCase();
+
+  // ── 1. Check keywords (strongest signal) ──────────────────────────────────
+  const keywordsRobo = [
+    'atendimento automático', 'atendimento automatico',
+    'assistente virtual', 'chatbot', ' bot ', 'sou um robô', 'sou um robo',
+    'horário de funcionamento', 'horario de funcionamento',
+    'horário de atendimento', 'horario de atendimento',
+    'fora do horário', 'fora do horario',
+    'indisponível', 'indisponivel',
+    'não estou disponível', 'nao estou disponivel',
+    'não estou aqui', 'nao estou aqui',
+    'digite 1', 'digite 2', 'digite 3', 'digite 4', 'digite 5',
+    'pressione 1', 'pressione 2',
+    'para falar com', 'para ser atendido',
+    'transferir para', 'nosso atendente',
+    'menu principal', 'menu de opções', 'menu de opcoes',
+    'olá! sou', 'olá, sou', 'ola! sou', 'ola, sou',
+    'sou o assistente', 'sou a assistente',
+    'mensagem automática', 'mensagem automatica',
+    'resposta automática', 'resposta automatica',
+    'este é um número automático', 'este e um numero automatico',
+    'não monitored', 'noreply',
+    'em breve retornaremos', 'entraremos em contato',
+  ];
+
+  for (const kw of keywordsRobo) {
+    if (lower.includes(kw)) {
+      console.log(`[AutoResposta] Classificado como ROBÔ por palavra-chave: "${kw}"`);
+      return 'robo';
+    }
+  }
+
+  // ── 2. Long message with many line breaks (menu-style) ────────────────────
+  const lineBreaks = (texto.match(/\n/g) || []).length;
+  if (texto.length > 300 && lineBreaks >= 4) {
+    console.log(`[AutoResposta] Classificado como ROBÔ por mensagem longa com menu (${texto.length} chars, ${lineBreaks} quebras)`);
+    return 'robo';
+  }
+
+  // ── 3. Timestamp comparison (< 3-second response = very likely bot) ───────
+  // WhatsApp shows time as "[HH:MM, DD/MM/YYYY]" in data-pre-plain-text
+  // We compare with sentAt to check if reply was within the same minute
+  if (replyTimestampStr && sentAt) {
+    try {
+      // Extract HH:MM from string like "[10:30, 11/06/2026]" or "10:30"
+      const timeMatch = replyTimestampStr.match(/(\d{1,2}):(\d{2})/);
+      const dateMatch = replyTimestampStr.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+
+      if (timeMatch) {
+        const replyHour = parseInt(timeMatch[1], 10);
+        const replyMin = parseInt(timeMatch[2], 10);
+
+        const sentDate = new Date(sentAt);
+        const sentHour = sentDate.getHours();
+        const sentMin = sentDate.getMinutes();
+
+        // Same minute or within 1 minute = "instant" response (bot-like)
+        const samMin = replyHour === sentHour && replyMin === sentMin;
+        const nextMin = replyHour === sentHour && replyMin === sentMin + 1;
+        const wrapMin = sentHour === 23 && replyHour === 0 && sentMin === 59 && replyMin === 0;
+
+        if (samMin || nextMin || wrapMin) {
+          console.log(`[AutoResposta] Classificado como ROBÔ por tempo de resposta rápido (enviado ${sentHour}:${sentMin}, respondeu ${replyHour}:${replyMin})`);
+          return 'robo';
+        }
+      }
+    } catch (e) {
+      // Ignore parse errors — fall through to human classification
+    }
+  }
+
+  // ── 4. Default: human ─────────────────────────────────────────────────────
+  console.log(`[AutoResposta] Classificado como HUMANO`);
+  return 'humano';
+}
+
+/**
+ * Sends the automatic follow-up message to a lead via WhatsApp Web.
+ * Waits until the session is not busy (isSending = false) before sending.
+ *
+ * @param {string} vendedorId
+ * @param {object} lead
+ * @param {string} texto
+ */
+async function enviarRespostaAutomatica(vendedorId, lead, texto) {
+  const MAX_WAIT_MS = 30 * 60 * 1000; // Wait up to 30 min for dispatch to finish
+  const CHECK_INTERVAL = 5000;
+  let waited = 0;
+
+  while (waited < MAX_WAIT_MS) {
+    const session = sessions.get(vendedorId);
+    if (!session || session.status !== 'connected') {
+      console.log(`[AutoResposta] Sessão do vendedor ${vendedorId} encerrada. Cancelando auto-resposta para ${lead.empresa}.`);
+      return;
+    }
+
+    if (!session.isSending) break;
+
+    await new Promise(r => setTimeout(r, CHECK_INTERVAL));
+    waited += CHECK_INTERVAL;
+  }
+
+  try {
+    // Call enviarMensagemAvulsa directly — defined later in this same module
+    await enviarMensagemAvulsa(vendedorId, lead.telefone, texto);
+    console.log(`[AutoResposta] Resposta automática enviada para ${lead.empresa}: "${texto.substring(0, 50)}..."`);
+  } catch (err) {
+    console.error(`[AutoResposta] Erro ao enviar resposta automática para ${lead.empresa}: ${err.message}`);
+  }
+}
+
+/**
+ * Monitors a lead for a reply after the initial message was sent.
+ * Runs in the background (do not await). Polls every 30 seconds for up to 4 hours.
+ * When a reply is detected, classifies it as bot or human and sends the appropriate response.
+ *
+ * @param {string} vendedorId
+ * @param {object} lead - Lead record from the DB
+ * @param {number} sentAt - Timestamp (ms) when the initial message was sent
+ * @param {{ msgRobo: string, msgHumano: string }} msgsConfig
+ */
+export async function monitorarRespostaLead(vendedorId, lead, sentAt, msgsConfig) {
+  const POLL_INTERVAL_MS = 30_000;          // 30 seconds between checks
+  const MAX_MONITOR_MS   = 4 * 60 * 60 * 1000; // 4 hours total
+  const { msgRobo, msgHumano } = msgsConfig;
+
+  // Register in queue
+  leadMonitorQueue.set(lead.id, { vendedorId, sentAt, resolved: false });
+  console.log(`[Monitor] Iniciando monitoramento de resposta para: ${lead.empresa} (${lead.telefone}) — até 4h`);
+
+  const phoneClean = lead.telefone.replace(/\D/g, '');
+
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < MAX_MONITOR_MS) {
+    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+
+    // Check if already resolved (e.g., by another path)
+    const entry = leadMonitorQueue.get(lead.id);
+    if (!entry || entry.resolved) {
+      console.log(`[Monitor] Lead ${lead.empresa} já resolvido. Encerrando monitor.`);
+      break;
+    }
+
+    const session = sessions.get(vendedorId);
+    if (!session || session.status !== 'connected') {
+      console.log(`[Monitor] Sessão do vendedor ${vendedorId} encerrada. Encerrando monitor de ${lead.empresa}.`);
+      leadMonitorQueue.delete(lead.id);
+      break;
+    }
+
+    // Skip if currently sending — don't interrupt dispatch
+    if (session.isSending) {
+      console.log(`[Monitor] Sessão ocupada com disparo. Aguardando próxima janela para checar ${lead.empresa}...`);
+      continue;
+    }
+
+    // Mark session as busy during check
+    session.isSending = true;
+    try {
+      const page = session.page;
+      const chatUrl = `https://web.whatsapp.com/send?phone=${phoneClean}`;
+      await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+
+      const textboxSelector = '#main div[contenteditable="true"], div[data-testid="conversation-text-input"]';
+      await page.waitForSelector(textboxSelector, { timeout: 12000 }).catch(() => {});
+      await new Promise(r => setTimeout(r, 1500));
+
+      // Extract messages from chat — we want direction, text, and WhatsApp's displayed timestamp
+      const chatMsgs = await page.evaluate(() => {
+        const containers = Array.from(document.querySelectorAll(
+          '#main div[data-testid="msg-container"], #main div.message-in, #main div.message-out'
+        ));
+        return containers.slice(-20).map(b => {
+          const isOut = b.classList.contains('message-out') ||
+                        !!b.querySelector('.message-out') ||
+                        b.innerHTML.includes('message-out');
+          const textEl = b.querySelector('span.selectable-text, span.copyable-text');
+          const text = textEl ? textEl.innerText.trim() : '';
+          // Try to get the WhatsApp message timestamp
+          const prePlain = b.getAttribute('data-pre-plain-text') || '';
+          const timeEl = b.querySelector('[data-testid="msg-time"], span.x1c4vz4f');
+          const timeStr = timeEl ? timeEl.innerText.trim() : '';
+          return {
+            direcao: isOut ? 'out' : 'in',
+            texto: text,
+            prePlain,    // e.g. "[10:30, 11/06/2026] Empresa XYZ:"
+            timeStr      // e.g. "10:30"
+          };
+        }).filter(m => m.texto !== '');
+      }).catch(() => []);
+
+      // Find new inbound messages not yet in our DB
+      for (const msg of chatMsgs) {
+        if (msg.direcao !== 'in') continue;
+
+        const exists = db.prepare(`
+          SELECT 1 FROM mensagens_chat WHERE lead_id = ? AND direcao = 'in' AND texto = ?
+        `).get(lead.id, msg.texto);
+
+        if (!exists) {
+          // New inbound message found!
+          console.log(`[Monitor] Resposta detectada de ${lead.empresa}: "${msg.texto.substring(0, 80)}"`);
+
+          // Save to mensagens_chat
+          const idMsg = 'wa_' + Math.random().toString(36).substring(2, 11);
+          const now = new Date().toISOString();
+          db.prepare(`
+            INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
+            VALUES (?, ?, ?, 'in', ?, ?)
+          `).run(idMsg, lead.id, vendedorId, msg.texto, now);
+
+          // Classify: bot or human?
+          const timestampStr = msg.prePlain || msg.timeStr;
+          const tipo = classificarResposta(msg.texto, sentAt, timestampStr);
+          let textoResposta = tipo === 'robo' ? msgRobo : msgHumano;
+
+          // Replace placeholders ({link_kiwify}, {empresa}) in auto-replies
+          if (textoResposta) {
+            let linkKiwify = "";
+            const vendedor = db.prepare("SELECT link_kiwify FROM vendedores WHERE id = ?").get(vendedorId);
+            if (vendedor && vendedor.link_kiwify) {
+              linkKiwify = vendedor.link_kiwify;
+            }
+            if (!linkKiwify) {
+              const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_afiliacao_kiwify");
+              if (globalConfig) {
+                linkKiwify = globalConfig.valor;
+              }
+            }
+            textoResposta = textoResposta.replace(/{link_kiwify}/g, linkKiwify || "");
+            textoResposta = textoResposta.replace(/{empresa}/g, lead.empresa || "");
+          }
+
+          // Update lead status
+          db.prepare(`
+            UPDATE leads SET status = 'Conversando', atualizado_em = ? WHERE id = ?
+          `).run(now, lead.id);
+
+          // Save classification to mensagens_chat as a system note
+          const idNote = 'sys_' + Math.random().toString(36).substring(2, 11);
+          db.prepare(`
+            INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
+            VALUES (?, ?, ?, 'system', ?, ?)
+          `).run(idNote, lead.id, vendedorId, `[Auto] Detectado: ${tipo === 'robo' ? '🤖 Robô' : '👤 Humano'}`, now);
+
+          // Mark as resolved
+          leadMonitorQueue.set(lead.id, { ...entry, resolved: true });
+
+          // Go back before sending (restore session)
+          session.isSending = false;
+          await page.goto('https://web.whatsapp.com/', { waitUntil: 'domcontentloaded' }).catch(() => {});
+
+          // Send the appropriate response (waits for any ongoing dispatch to finish)
+          if (textoResposta && textoResposta.trim()) {
+            console.log(`[Monitor] Enviando resposta automática (${tipo}) para ${lead.empresa}...`);
+            enviarRespostaAutomatica(vendedorId, lead, textoResposta).catch(console.error);
+          }
+
+          leadMonitorQueue.delete(lead.id);
+          return; // Exit the monitoring loop
+        }
+      }
+
+      // No new messages — go back to main screen
+      await page.goto('https://web.whatsapp.com/', { waitUntil: 'domcontentloaded' }).catch(() => {});
+
+    } catch (err) {
+      console.error(`[Monitor] Erro ao verificar chat de ${lead.empresa}: ${err.message}`);
+    } finally {
+      session.isSending = false;
+    }
+  }
+
+  // Timeout reached without reply
+  if (leadMonitorQueue.has(lead.id)) {
+    console.log(`[Monitor] Tempo limite (4h) atingido para ${lead.empresa}. Encerrando monitoramento.`);
+    leadMonitorQueue.delete(lead.id);
+  }
+}
+
+/**
  * Dispatches WhatsApp messages to a seller's assigned leads.
  */
 export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
@@ -662,6 +957,12 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
   try {
     const page = session.page;
     const resultados = [];
+
+    // Load auto-reply configs for bot vs human responses
+    const msgRoboRow    = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'mensagem_resposta_robo'").get();
+    const msgHumanoRow  = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'mensagem_resposta_humano'").get();
+    const msgRobo   = msgRoboRow   ? msgRoboRow.valor   : '';
+    const msgHumano = msgHumanoRow ? msgHumanoRow.valor : '';
     
     // Ensure we have an array of template texts
     const msgTemplates = Array.isArray(mensagemTexto) ? mensagemTexto : [mensagemTexto];
@@ -694,6 +995,9 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
         // Clean phone numbers
         const phoneClean = formatarTelefoneWhatsApp(lead.telefone);
         
+        // Record exact time we're sending — used later for bot/human detection by response speed
+        const sentAt = Date.now();
+
         // Open direct URL to WhatsApp API send interface
         const sendUrl = `https://web.whatsapp.com/send?phone=${phoneClean}&text=${encodeURIComponent(textoPersonalizado)}`;
         await page.goto(sendUrl, { waitUntil: "domcontentloaded" });
@@ -840,6 +1144,11 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
 
         resultados.push({ id: lead.id, empresa: lead.empresa, status: "Mensagem enviada" });
         console.log(`Mensagem enviada com sucesso para ${lead.empresa}`);
+
+        // Start background monitor for this lead's reply (bot vs human detection)
+        monitorarRespostaLead(vendedorId, lead, sentAt, { msgRobo, msgHumano }).catch(err => {
+          console.error(`[Monitor] Erro no monitor de ${lead.empresa}:`, err.message);
+        });
 
       } catch (err) {
         console.error(`Erro ao disparar para ${lead.empresa}:`, err.message);

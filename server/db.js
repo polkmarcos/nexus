@@ -63,6 +63,7 @@ db.exec(`
     nome TEXT NOT NULL,
     texto TEXT NOT NULL,
     ativa INTEGER DEFAULT 1,
+    condicao_site TEXT DEFAULT 'qualquer',
     criado_em TEXT NOT NULL
   );
 
@@ -144,11 +145,19 @@ try {
 } catch (_) {}
 
 try {
+  db.exec("ALTER TABLE vendedores ADD COLUMN pix TEXT;");
+} catch (_) {}
+
+try {
   db.exec("ALTER TABLE leads ADD COLUMN assigned_to TEXT;");
 } catch (_) {}
 
 try {
   db.exec("ALTER TABLE leads ADD COLUMN assigned_at TEXT;");
+} catch (_) {}
+
+try {
+  db.exec("ALTER TABLE mensagens ADD COLUMN condicao_site TEXT DEFAULT 'qualquer';");
 } catch (_) {}
 
 
@@ -183,6 +192,26 @@ try {
   db.prepare(`
     INSERT OR IGNORE INTO configuracoes (chave, valor)
     VALUES ('link_afiliacao_kiwify', 'https://dashboard.kiwify.com.br/affiliate/join/exemplo')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('query_disparo', 'hamburguerias em São Paulo')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('nicho_disparo', 'hamburguerias')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('limite_disparo', '20')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('mensagem_resposta_robo', 'Obrigado pelo retorno! Percebi que vocês têm um atendimento automático. Gostaria de falar diretamente com o responsável para apresentar uma solução que pode aumentar muito as vendas de vocês. Qual o melhor horário para conversar?')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('mensagem_resposta_humano', 'Olá! Que ótimo que você viu nossa mensagem! 😊 Tenho uma proposta especial que pode fazer uma grande diferença no seu negócio. Posso te mostrar rapidinho como funciona?')
   `).run();
 } catch (e) {
   console.error("Erro ao inserir configs padrão:", e.message);
