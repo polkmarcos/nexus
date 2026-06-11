@@ -437,7 +437,7 @@ export async function scrapeGoogleMaps(query, nicho, limit = 20, checkCancelled,
         
         if (onLeadSaved) {
           try {
-            onLeadSaved(lead);
+            await onLeadSaved(lead);
           } catch (callbackErr) {
             console.error("Erro no callback onLeadSaved:", callbackErr.message);
           }
@@ -811,7 +811,7 @@ export async function scrapeGoogleMapsParaDisparo(query, nicho, limit = 20, vend
         // Disparar callback imediatamente para o pipeline enviar a mensagem
         if (onLeadSaved) {
           try {
-            onLeadSaved(lead);
+            await onLeadSaved(lead);
           } catch (callbackErr) {
             console.error("[Disparo] Erro no callback onLeadSaved:", callbackErr.message);
           }

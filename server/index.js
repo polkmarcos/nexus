@@ -1834,6 +1834,56 @@ app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
         await new Promise(r => setTimeout(r, delay));
       }
 
+      // Se não atingimos o limite rodando do banco, coletar em tempo real
+      if (totalEnviados < totalARodar && !session.abortSending && session.status === "connected") {
+        console.log(`[Disparo] Faltam ${totalARodar - totalEnviados} leads para atingir o limite. Iniciando coleta em tempo real via Google Maps.`);
+        try {
+          const queryDisparoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'query_disparo'").get();
+          const queryDisparo = queryDisparoRow?.valor || "";
+          const query = queryDisparo.trim() || nichoDisparo || "Empresas";
+          
+          const limitRestante = totalARodar - totalEnviados;
+          
+          const checkCancelled = () => {
+            return session.abortSending || session.status !== "connected";
+          };
+          
+          const onLeadSaved = async (newLead) => {
+            try {
+              // Filtrar mensagens ativas que combinam com a condição do site do lead
+              const temSite = !!(newLead.site && newLead.site.trim() !== "" && newLead.site !== "Não Informado" && newLead.site !== "Não Informada");
+              
+              const msgsFiltradas = msgsAtivas.filter(m => {
+                const cond = m.condicao_site || 'qualquer';
+                if (cond === 'com_site') return temSite;
+                if (cond === 'sem_site') return !temSite;
+                return true; // qualquer
+              });
+
+              const msgsParaUsar = msgsFiltradas.length > 0 ? msgsFiltradas : msgsAtivas;
+
+              // Usar templates em rotação dentro da lista filtrada
+              const textoTemplate = msgsParaUsar[templateIndex % msgsParaUsar.length].texto;
+              templateIndex++;
+
+              console.log(`[Disparo - Raspado] (${totalEnviados + 1}/${totalARodar}) Enviando para: ${newLead.empresa} (${newLead.telefone}) [Site: ${newLead.site || 'Nenhum'}]`);
+              await dispararMensagemParaLead(vendedorId, newLead, textoTemplate);
+              totalEnviados++;
+            } catch (err) {
+              console.error(`[Disparo - Raspado] Erro ao disparar para ${newLead.empresa}:`, err.message);
+            }
+            
+            // Intervalo aleatório entre envios (5 a 15 segundos)
+            const delay = Math.floor(Math.random() * 10000) + 5000;
+            await new Promise(r => setTimeout(r, delay));
+          };
+
+          await scrapeGoogleMapsParaDisparo(query, nichoDisparo, limitRestante, vendedorId, checkCancelled, onLeadSaved);
+        } catch (scrapeErr) {
+          console.error(`[Disparo] Erro durante a raspagem em tempo real:`, scrapeErr.message);
+        }
+      }
+
       console.log(`[Disparo] Processamento concluído. Total enviados: ${totalEnviados}`);
       session.isSending = false;
     })().catch(err => {
