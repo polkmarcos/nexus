@@ -1840,8 +1840,38 @@ app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
         try {
           const queryDisparoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'query_disparo'").get();
           const queryDisparo = queryDisparoRow?.valor || "";
-          const query = queryDisparo.trim() || nichoDisparo || "Empresas";
+          const queryBase = queryDisparo.trim() || nichoDisparo || "Empresas";
           
+          // Carregar a lista de cidades do arquivo nacional (municipios.json)
+          let cidadesLista = CIDADES_VARREDURA;
+          try {
+            const fileContent = fs.readFileSync(path.join(__dirname, "municipios.json"), "utf-8");
+            const parsed = JSON.parse(fileContent);
+            cidadesLista = parsed.map(c => `${c.nome} - ${c.uf}`);
+            console.log(`[Disparo - Scraper] Carregadas ${cidadesLista.length} cidades de municipios.json.`);
+          } catch (err) {
+            console.error("[Disparo - Scraper] Falha ao ler municipios.json, usando fallback do index.js:", err.message);
+          }
+
+          // Achar a primeira cidade que não foi capturada para este nicho
+          let cidadeEscolhida = null;
+          for (const cidade of cidadesLista) {
+            const alreadyScraped = db.prepare("SELECT 1 FROM historico_capturas_cidades WHERE cidade = ? AND nicho = ?").get(cidade, nichoDisparo);
+            if (!alreadyScraped) {
+              cidadeEscolhida = cidade;
+              break;
+            }
+          }
+
+          // Se todas as cidades já foram capturadas, seleciona uma aleatória
+          if (!cidadeEscolhida) {
+            cidadeEscolhida = cidadesLista[Math.floor(Math.random() * cidadesLista.length)];
+            console.log(`[Disparo - Scraper] Todas as cidades já foram capturadas para o nicho "${nichoDisparo}". Selecionando cidade aleatória como fallback: ${cidadeEscolhida}`);
+          }
+
+          const query = `${queryBase} em ${cidadeEscolhida}`;
+          console.log(`[Disparo - Scraper] Cidade selecionada para busca: "${cidadeEscolhida}". Query de busca Google Maps: "${query}".`);
+
           const limitRestante = totalARodar - totalEnviados;
           
           const checkCancelled = () => {
@@ -1879,6 +1909,15 @@ app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
           };
 
           await scrapeGoogleMapsParaDisparo(query, nichoDisparo, limitRestante, vendedorId, checkCancelled, onLeadSaved);
+
+          // Registrar no histórico de capturas de cidades para este nicho
+          try {
+            db.prepare("INSERT OR REPLACE INTO historico_capturas_cidades (cidade, nicho, capturado_em) VALUES (?, ?, ?)").run(cidadeEscolhida, nichoDisparo, new Date().toISOString());
+            console.log(`[Disparo - Scraper] Cidade "${cidadeEscolhida}" registrada no histórico de capturas para o nicho "${nichoDisparo}".`);
+          } catch (saveHistoryErr) {
+            console.error("[Disparo - Scraper] Erro ao registrar cidade no histórico:", saveHistoryErr.message);
+          }
+
         } catch (scrapeErr) {
           console.error(`[Disparo] Erro durante a raspagem em tempo real:`, scrapeErr.message);
         }
