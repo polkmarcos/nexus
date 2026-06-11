@@ -3,6 +3,9 @@ FROM mcr.microsoft.com/playwright:v1.60.0-noble
 # Set working directory
 WORKDIR /app
 
+# Configure persistent directory for WhatsApp sessions
+ENV WHATSAPP_SESSIONS_DIR=/data/whatsapp-sessions
+
 # Install system compilation dependencies for better-sqlite3
 RUN apt-get update && apt-get install -y \
     python3 \
