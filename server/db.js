@@ -252,6 +252,10 @@ try {
     INSERT OR IGNORE INTO configuracoes (chave, valor)
     VALUES ('mensagem_resposta_humano', 'Olá! Que ótimo que você viu nossa mensagem! 😊 Tenho uma proposta especial que pode fazer uma grande diferença no seu negócio. Posso te mostrar rapidinho como funciona?')
   `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('whatsapp_suporte', '')
+  `).run();
 } catch (e) {
   console.error("Erro ao inserir configs padrão:", e.message);
 }

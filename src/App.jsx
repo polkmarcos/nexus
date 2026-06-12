@@ -54,7 +54,22 @@ export default function App() {
   const [pagina, setPagina] = useState(usuarioInicial ? "vendedor-dashboard" : "landing");
   const [adminMensagensAba, setAdminMensagensAba] = useState("prospeccao");
   const [mobileMenuAberto, setMobileMenuAberto] = useState(false);
+  const [whatsappSuporte, setWhatsappSuporte] = useState("");
 
+  useEffect(() => {
+    async function obterConfigSuporte() {
+      try {
+        const res = await fetch(`${API_URL}/configuracoes`);
+        const data = await res.json();
+        if (data.ok && data.whatsapp_suporte !== undefined) {
+          setWhatsappSuporte(data.whatsapp_suporte);
+        }
+      } catch (err) {
+        console.error("Erro ao obter WhatsApp de suporte:", err);
+      }
+    }
+    obterConfigSuporte();
+  }, [usuarioLogado]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -121,6 +136,7 @@ export default function App() {
         sidebarRecolhida={sidebarRecolhida}
         setSidebarRecolhida={setSidebarRecolhida}
         mobileMenuAberto={mobileMenuAberto}
+        whatsappSuporte={whatsappSuporte}
       />
 
       <main className="conteudo">
@@ -168,7 +184,7 @@ export default function App() {
   );
 }
 
-function Sidebar({ pagina, setPagina, usuarioLogado, sair, adminToken, sairAdmin, sidebarRecolhida, setSidebarRecolhida, mobileMenuAberto }) {
+function Sidebar({ pagina, setPagina, usuarioLogado, sair, adminToken, sairAdmin, sidebarRecolhida, setSidebarRecolhida, mobileMenuAberto, whatsappSuporte }) {
   return (
     <aside className={`sidebar ${sidebarRecolhida ? "recolhida" : ""} ${mobileMenuAberto ? "aberto-mobile" : ""}`}>
       <div className="logo-container" style={{ 
@@ -394,6 +410,21 @@ function Sidebar({ pagina, setPagina, usuarioLogado, sair, adminToken, sairAdmin
             </>
           )}
           <div className="sidebar-footer">
+            {whatsappSuporte && (
+              <a 
+                href={`https://wa.me/${whatsappSuporte.replace(/\D/g, "")}?text=Olá,%20preciso%20de%20suporte%20no%20painel%20da%20Nexus.`} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="btn-whatsapp-suporte"
+              >
+                <span className="sidebar-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style={{ display: "block" }}>
+                    <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.455L0 24zm6.59-4.846c1.6.95 3.197 1.45 4.817 1.457 5.432.003 9.851-4.354 9.854-9.707.001-2.592-1.01-5.029-2.846-6.868-1.837-1.838-4.279-2.849-6.874-2.85-5.437 0-9.859 4.355-9.863 9.709-.001 1.76.478 3.483 1.39 5.018l-.993 3.627 3.715-.986zm11.387-5.474c-.3-.15-1.772-.875-2.046-.975-.274-.1-.474-.15-.674.15-.2.3-.773.975-.95 1.174-.175.2-.35.225-.65.075-.3-.15-1.263-.465-2.403-1.485-.888-.795-1.488-1.777-1.663-2.077-.175-.3-.018-.463.13-.61L9.67 9.89c.125-.15.175-.25.25-.425.075-.175.037-.325-.019-.425-.056-.1-.474-1.144-.65-1.569-.17-.411-.34-.356-.47-.356-.12-.006-.26-.006-.4-.006s-.36.05-.55.25c-.2.2-.75.735-.75 1.792 0 1.057.77 2.077.877 2.227.11.15 1.516 2.314 3.67 3.243.513.221.913.353 1.225.452.516.164.986.141 1.356.085.414-.062 1.771-.725 2.022-1.425.25-.7.25-1.299.175-1.424-.076-.125-.275-.2-.575-.35z"/>
+                  </svg>
+                </span>
+                <span className="sidebar-text">Suporte WhatsApp</span>
+              </a>
+            )}
             <button onClick={sair} className="btn-danger" style={{ color: "white" }}>
               <span className="sidebar-icon">🚪</span>
               <span className="sidebar-text">Sair da Conta</span>
@@ -436,6 +467,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
   const [limiteDisparo, setLimiteDisparo] = useState(20);
   const [msgRobo, setMsgRobo] = useState("");
   const [msgHumano, setMsgHumano] = useState("");
+  const [whatsappSuporte, setWhatsappSuporte] = useState("");
   const [configErro, setConfigErro] = useState("");
   const [configSucesso, setConfigSucesso] = useState("");
 
@@ -516,6 +548,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
         if (data.limite_disparo !== undefined) setLimiteDisparo(Number(data.limite_disparo));
         if (data.mensagem_resposta_robo !== undefined) setMsgRobo(data.mensagem_resposta_robo);
         if (data.mensagem_resposta_humano !== undefined) setMsgHumano(data.mensagem_resposta_humano);
+        if (data.whatsapp_suporte !== undefined) setWhatsappSuporte(data.whatsapp_suporte);
       }
     } catch (e) {
       console.error("Erro ao carregar configurações", e);
@@ -537,7 +570,8 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
         nicho_disparo: nichoDisparo,
         limite_disparo: limiteDisparo,
         mensagem_resposta_robo: msgRobo,
-        mensagem_resposta_humano: msgHumano
+        mensagem_resposta_humano: msgHumano,
+        whatsapp_suporte: whatsappSuporte
       };
       if (novaSenhaAdmin.trim() !== "") {
         payload.senha_administrador = novaSenhaAdmin;
@@ -820,6 +854,19 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
               />
               <small style={{ color: "var(--text-secondary)" }}>
                 Nova senha para login no painel de controle.
+              </small>
+            </div>
+
+            <div className="form-group">
+              <label>📞 WhatsApp de Suporte (DDD + Número)</label>
+              <input 
+                type="text" 
+                value={whatsappSuporte} 
+                onChange={e => setWhatsappSuporte(e.target.value)} 
+                placeholder="Ex: 5511999999999" 
+              />
+              <small style={{ color: "var(--text-secondary)" }}>
+                Número com código do país (55) e DDD que os funcionários usarão para tirar dúvidas.
               </small>
             </div>
 

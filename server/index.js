@@ -923,7 +923,8 @@ app.put("/configuracoes", (req, res) => {
       nicho_disparo,
       limite_disparo,
       mensagem_resposta_robo,
-      mensagem_resposta_humano
+      mensagem_resposta_humano,
+      whatsapp_suporte
     } = req.body;
     
     db.transaction(() => {
@@ -975,6 +976,11 @@ app.put("/configuracoes", (req, res) => {
       if (mensagem_resposta_humano !== undefined) {
         db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('mensagem_resposta_humano', ?)")
           .run(String(mensagem_resposta_humano));
+      }
+
+      if (whatsapp_suporte !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('whatsapp_suporte', ?)")
+          .run(String(whatsapp_suporte).trim());
       }
     })();
     
