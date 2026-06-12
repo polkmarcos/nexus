@@ -139,6 +139,7 @@ export default function App() {
             {pagina === "admin-leads" && <AdminLeads />}
             {pagina === "admin-mensagens" && <AdminMensagens abaAtiva={adminMensagensAba} setAbaAtiva={setAdminMensagensAba} />}
             {pagina === "admin-prevendas" && <AdminPreVendas />}
+            {pagina === "admin-sandbox" && <AdminSandbox />}
 
             {/* Seller Pages */}
             {pagina === "landing" && (
@@ -286,6 +287,13 @@ function Sidebar({ pagina, setPagina, usuarioLogado, sair, adminToken, sairAdmin
                 >
                   <span className="sidebar-icon">💰</span>
                   <span className="sidebar-text">Pré-Vendas / Comissão</span>
+                </button>
+                <button
+                  className={pagina === "admin-sandbox" ? "ativo" : ""}
+                  onClick={() => setPagina("admin-sandbox")}
+                >
+                  <span className="sidebar-icon">🧪</span>
+                  <span className="sidebar-text">Sandbox / Testes</span>
                 </button>
                 <div className="sidebar-footer">
                   <button onClick={sairAdmin} className="btn-danger" style={{ color: "white" }}>
@@ -2786,6 +2794,443 @@ function AdminPreVendas() {
           </table>
         </div>
       </div>
+    </section>
+  );
+}
+
+// 7. ADMIN SANDBOX / TESTING VIEW
+function AdminSandbox() {
+  const [vendedores, setVendedores] = useState([]);
+  const [vendedorId, setVendedorId] = useState("");
+  const [abaAtiva, setAbaAtiva] = useState("mensagem"); // "mensagem" | "scraper" | "whatsapp"
+  
+  // Envio
+  const [modoEnvio, setModoEnvio] = useState("unico"); // "unico" | "lote"
+  const [telefone, setTelefone] = useState("");
+  const [telefonesLote, setTelefonesLote] = useState("");
+  const [mensagemTexto, setMensagemTexto] = useState("");
+  const [delayLote, setDelayLote] = useState(5); // em segundos
+  const [enviando, setEnviando] = useState(false);
+  const [resultadoMsg, setResultadoMsg] = useState("");
+  const [statusMsg, setStatusMsg] = useState(""); // "success" | "error"
+
+  // Status WA
+  const [waStatus, setWaStatus] = useState("");
+  const [waChecking, setWaChecking] = useState(false);
+
+  // Scraper Test
+  const [queryScraper, setQueryScraper] = useState("");
+  const [limitScraper, setLimitScraper] = useState(3);
+  const [scraping, setScraping] = useState(false);
+  const [leadsScrapados, setLeadsScrapados] = useState([]);
+  const [scraperErro, setScraperErro] = useState("");
+
+  async function carregarVendedores() {
+    try {
+      const res = await fetch(`${API_URL}/vendedores`);
+      const data = await res.json();
+      if (data.ok) {
+        setVendedores(data.vendedores || []);
+        if (data.vendedores.length > 0) {
+          setVendedorId(data.vendedores[0].id);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  useEffect(() => {
+    carregarVendedores();
+  }, []);
+
+  async function verificarStatusWhatsApp() {
+    if (!vendedorId) {
+      alert("Selecione um vendedor primeiro.");
+      return;
+    }
+    setWaChecking(true);
+    setWaStatus("");
+    try {
+      const res = await fetch(`${API_URL}/whatsapp/status/${vendedorId}`);
+      const data = await res.json();
+      if (data.ok) {
+        setWaStatus(data.status); // "connected", "disconnected", "initializing"
+      } else {
+        setWaStatus("Erro ao verificar: " + data.error);
+      }
+    } catch (e) {
+      setWaStatus("Falha de conexão com o servidor");
+    } finally {
+      setWaChecking(false);
+    }
+  }
+
+  async function enviarTeste(e) {
+    e.preventDefault();
+    if (!vendedorId) {
+      setResultadoMsg("Selecione um vendedor.");
+      setStatusMsg("error");
+      return;
+    }
+    if (modoEnvio === "unico" && !telefone.trim()) {
+      setResultadoMsg("Informe o número de telefone.");
+      setStatusMsg("error");
+      return;
+    }
+    if (modoEnvio === "lote" && !telefonesLote.trim()) {
+      setResultadoMsg("Informe a lista de telefones.");
+      setStatusMsg("error");
+      return;
+    }
+    if (!mensagemTexto.trim()) {
+      setResultadoMsg("Digite a mensagem a ser enviada.");
+      setStatusMsg("error");
+      return;
+    }
+
+    setEnviando(true);
+    setResultadoMsg("");
+    setStatusMsg("");
+
+    try {
+      if (modoEnvio === "unico") {
+        const res = await fetch(`${API_URL}/admin/sandbox/enviar`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            vendedorId,
+            telefone: telefone.trim(),
+            texto: mensagemTexto.trim()
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          setResultadoMsg("Mensagem avulsa enviada com sucesso!");
+          setStatusMsg("success");
+          setTelefone("");
+        } else {
+          setResultadoMsg(data.error || "Erro ao enviar mensagem.");
+          setStatusMsg("error");
+        }
+      } else {
+        // Envio lote
+        const listaTels = telefonesLote
+          .split(/[\n,;]/)
+          .map(t => t.trim().replace(/\D/g, ""))
+          .filter(t => t.length >= 8);
+
+        if (listaTels.length === 0) {
+          setResultadoMsg("Nenhum telefone válido encontrado na lista.");
+          setStatusMsg("error");
+          setEnviando(false);
+          return;
+        }
+
+        const res = await fetch(`${API_URL}/admin/sandbox/enviar-lote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            vendedorId,
+            telefones: listaTels,
+            texto: mensagemTexto.trim(),
+            delay: delayLote * 1000
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          setResultadoMsg(`Disparo em lote iniciado em background para ${listaTels.length} números!`);
+          setStatusMsg("success");
+          setTelefonesLote("");
+        } else {
+          setResultadoMsg(data.error || "Erro ao iniciar disparo em lote.");
+          setStatusMsg("error");
+        }
+      }
+    } catch (err) {
+      setResultadoMsg("Falha na comunicação com o servidor.");
+      setStatusMsg("error");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  async function testarScraper(e) {
+    e.preventDefault();
+    if (!queryScraper.trim()) {
+      setScraperErro("Digite um termo de busca.");
+      return;
+    }
+    setScraping(true);
+    setScraperErro("");
+    setLeadsScrapados([]);
+
+    try {
+      const res = await fetch(`${API_URL}/admin/sandbox/testar-captura`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: queryScraper.trim(),
+          limit: Number(limitScraper)
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setLeadsScrapados(data.leads || []);
+        if ((data.leads || []).length === 0) {
+          setScraperErro("Nenhum estabelecimento encontrado ou todos os contatos já existem.");
+        }
+      } else {
+        setScraperErro(data.error || "Erro ao rodar scraper dry-run.");
+      }
+    } catch (err) {
+      setScraperErro("Erro na comunicação com o servidor.");
+    } finally {
+      setScraping(false);
+    }
+  }
+
+  return (
+    <section>
+      <h1>Sandbox e Painel de Testes</h1>
+      <p className="subtitle">Espaço seguro para testar envio de mensagens individuais/lote, validar sessões de WhatsApp e testar capturas do Google Maps sem salvar ou alterar dados de produção.</p>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: "10px", marginBottom: "20px", borderBottom: "1px solid var(--border-color)", paddingBottom: "12px" }}>
+        <button 
+          className={`btn ${abaAtiva === "mensagem" ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => setAbaAtiva("mensagem")}
+        >
+          💬 Disparos de Teste
+        </button>
+        <button 
+          className={`btn ${abaAtiva === "scraper" ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => setAbaAtiva("scraper")}
+        >
+          🔍 Testar Scraper
+        </button>
+        <button 
+          className={`btn ${abaAtiva === "whatsapp" ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => setAbaAtiva("whatsapp")}
+        >
+          📱 Status WhatsApp
+        </button>
+      </div>
+
+      {/* 1. ABA MENSAGEM */}
+      {abaAtiva === "mensagem" && (
+        <div className="card">
+          <h2>Envio de Mensagens via WhatsApp</h2>
+          <p className="subtitle" style={{ fontSize: "0.85rem", marginTop: "-5px", marginBottom: "20px" }}>Use as sessões dos funcionários para enviar mensagens. Certifique-se de que a sessão do vendedor selecionado está conectada.</p>
+
+          {resultadoMsg && (
+            <div className={`alert ${statusMsg === "success" ? "alert-success" : "alert-error"}`} style={{ marginBottom: "20px" }}>
+              {resultadoMsg}
+            </div>
+          )}
+
+          <form onSubmit={enviarTeste}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "15px" }}>
+              <div className="form-group">
+                <label>Vendedor para Disparo (Sessão)</label>
+                <select value={vendedorId} onChange={e => setVendedorId(e.target.value)} required>
+                  <option value="">Selecione um vendedor</option>
+                  {vendedores.map(v => (
+                    <option key={v.id} value={v.id}>{v.nome} ({v.ativo ? "Ativo" : "Inativo"})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Modo de Envio</label>
+                <select value={modoEnvio} onChange={e => setModoEnvio(e.target.value)}>
+                  <option value="unico">Número Único</option>
+                  <option value="lote">Lote de Números (Múltiplos)</option>
+                </select>
+              </div>
+            </div>
+
+            {modoEnvio === "unico" ? (
+              <div className="form-group" style={{ marginBottom: "15px" }}>
+                <label>Número de WhatsApp (DDD + Número)</label>
+                <input 
+                  type="text" 
+                  value={telefone} 
+                  onChange={e => setTelefone(e.target.value)} 
+                  placeholder="Ex: 11999999999"
+                  disabled={enviando}
+                />
+                <small style={{ color: "var(--text-tertiary)" }}>Evite formatações, insira apenas os números.</small>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr", gap: "20px", marginBottom: "15px" }}>
+                <div className="form-group">
+                  <label>Lista de Números (Um por linha ou separados por vírgula)</label>
+                  <textarea 
+                    value={telefonesLote} 
+                    onChange={e => setTelefonesLote(e.target.value)} 
+                    placeholder="Ex:&#10;11999999999&#10;11988888888&#10;11977777777"
+                    rows="4"
+                    disabled={enviando}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Delay entre Envios (Segundos)</label>
+                  <input 
+                    type="number" 
+                    value={delayLote} 
+                    onChange={e => setDelayLote(Number(e.target.value))} 
+                    min="2"
+                    max="60"
+                    disabled={enviando}
+                  />
+                  <small style={{ color: "var(--text-tertiary)" }}>Recomendado: 5s+</small>
+                </div>
+              </div>
+            )}
+
+            <div className="form-group" style={{ marginBottom: "20px" }}>
+              <label>Conteúdo da Mensagem</label>
+              <textarea 
+                value={mensagemTexto} 
+                onChange={e => setMensagemTexto(e.target.value)} 
+                placeholder="Escreva a mensagem aqui..."
+                rows="4"
+                required
+                disabled={enviando}
+              />
+            </div>
+
+            <button type="submit" className="btn btn-primary" disabled={enviando} style={{ padding: "12px 24px" }}>
+              {enviando ? "Enviando Disparos..." : "🚀 Enviar Mensagem de Teste"}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* 2. ABA SCRAPER */}
+      {abaAtiva === "scraper" && (
+        <div className="card">
+          <h2>Testar Captura do Google Maps (Simulação)</h2>
+          <p className="subtitle" style={{ fontSize: "0.85rem", marginTop: "-5px", marginBottom: "20px" }}>Teste a busca do robô em tempo real. Os leads capturados serão apenas exibidos na tela, sem salvar no banco de dados e sem enviar mensagens.</p>
+
+          {scraperErro && (
+            <div className="alert alert-error" style={{ marginBottom: "20px" }}>
+              {scraperErro}
+            </div>
+          )}
+
+          <form onSubmit={testarScraper} style={{ display: "flex", gap: "15px", alignItems: "flex-end", marginBottom: "25px", flexWrap: "wrap" }}>
+            <div className="form-group" style={{ flex: 1, minWidth: "250px", margin: 0 }}>
+              <label>Termo de Busca (Ex: Pizzarias em Osasco - SP)</label>
+              <input 
+                type="text" 
+                value={queryScraper} 
+                onChange={e => setQueryScraper(e.target.value)} 
+                placeholder="Digite a busca do Google Maps"
+                disabled={scraping}
+                required
+              />
+            </div>
+            <div className="form-group" style={{ width: "120px", margin: 0 }}>
+              <label>Limite (Máx 10)</label>
+              <input 
+                type="number" 
+                value={limitScraper} 
+                onChange={e => setLimitScraper(Math.min(10, Math.max(1, Number(e.target.value))))} 
+                min="1" 
+                max="10"
+                disabled={scraping}
+                required
+              />
+            </div>
+            <button type="submit" className="btn btn-primary" disabled={scraping} style={{ height: "42px", padding: "0 24px" }}>
+              {scraping ? "🔍 Buscando..." : "🔍 Iniciar Teste de Captura"}
+            </button>
+          </form>
+
+          {scraping && (
+            <div style={{ textAlign: "center", padding: "40px", color: "var(--text-secondary)" }}>
+              <div className="spinner" style={{ margin: "0 auto 15px auto" }}></div>
+              <p>O robô do Playwright está abrindo o Google Maps e extraindo os dados em tempo real...</p>
+              <small style={{ color: "var(--text-tertiary)" }}>Isso pode levar entre 30 e 60 segundos.</small>
+            </div>
+          )}
+
+          {leadsScrapados.length > 0 && (
+            <div style={{ marginTop: "20px" }}>
+              <h3 style={{ marginBottom: "12px", color: "var(--primary)" }}>Leads Encontrados no Teste ({leadsScrapados.length})</h3>
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Empresa</th>
+                      <th>Telefone</th>
+                      <th>Cidade/UF</th>
+                      <th>Endereço</th>
+                      <th>Site</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leadsScrapados.map((l, idx) => (
+                      <tr key={idx}>
+                        <td><strong>{l.empresa}</strong></td>
+                        <td>{l.telefone}</td>
+                        <td>{l.cidade} / {l.estado}</td>
+                        <td><small>{l.endereco}</small></td>
+                        <td>{l.site ? <a href={l.site} target="_blank" rel="noreferrer" style={{ color: "var(--primary)" }}>🌐 Website</a> : "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 3. ABA WHATSAPP */}
+      {abaAtiva === "whatsapp" && (
+        <div className="card">
+          <h2>Checar Conexão do WhatsApp</h2>
+          <p className="subtitle" style={{ fontSize: "0.85rem", marginTop: "-5px", marginBottom: "20px" }}>Verifique a conexão em tempo real da sessão do WhatsApp Web de qualquer funcionário cadastrado no sistema.</p>
+
+          <div style={{ display: "flex", gap: "15px", alignItems: "flex-end", flexWrap: "wrap", marginBottom: "20px" }}>
+            <div className="form-group" style={{ minWidth: "250px", margin: 0 }}>
+              <label>Escolher Funcionário / Vendedor</label>
+              <select value={vendedorId} onChange={e => setVendedorId(e.target.value)}>
+                <option value="">Selecione um vendedor</option>
+                {vendedores.map(v => (
+                  <option key={v.id} value={v.id}>{v.nome}</option>
+                ))}
+              </select>
+            </div>
+            <button 
+              type="button" 
+              className="btn btn-secondary" 
+              onClick={verificarStatusWhatsApp} 
+              disabled={waChecking || !vendedorId}
+              style={{ height: "42px", padding: "0 20px" }}
+            >
+              {waChecking ? "Consultando..." : "📡 Verificar Conexão"}
+            </button>
+          </div>
+
+          {waStatus && (
+            <div style={{ marginTop: "20px", padding: "20px", background: "var(--bg-secondary)", borderRadius: "10px", border: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "15px" }}>
+              <div style={{ fontSize: "2rem" }}>
+                {waStatus === "connected" ? "🟢" : waStatus === "disconnected" ? "🔴" : "🟡"}
+              </div>
+              <div>
+                <h4 style={{ margin: "0 0 5px 0" }}>Status da Sessão:</h4>
+                <div style={{ textTransform: "uppercase", fontWeight: "800", letterSpacing: "1px", color: waStatus === "connected" ? "var(--success)" : waStatus === "disconnected" ? "#ef4444" : "var(--primary)" }}>
+                  {waStatus === "connected" ? "Conectado (Ativo)" : waStatus === "disconnected" ? "Desconectado" : waStatus}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }

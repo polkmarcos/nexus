@@ -10,8 +10,8 @@ import db from "./db.js";
  * @param {number} limit - Maximum number of leads to scrape
  * @returns {Promise<Array>} - List of captured leads
  */
-export async function scrapeGoogleMaps(query, nicho, limit = 20, checkCancelled, onLeadSaved) {
-  console.log(`Iniciando scraper do Google Maps. Query: "${query}", Nicho: "${nicho}", Limite: ${limit}`);
+export async function scrapeGoogleMaps(query, nicho, limit = 20, checkCancelled, onLeadSaved, dryRun = false) {
+  console.log(`Iniciando scraper do Google Maps. Query: "${query}", Nicho: "${nicho}", Limite: ${limit}, DryRun: ${dryRun}`);
   
   // Pré-carregar todos os leads do banco de dados (independente de nicho) para evitar duplicados entre vendedores
   const existingLeads = db.prepare(`
@@ -416,19 +416,23 @@ export async function scrapeGoogleMaps(query, nicho, limit = 20, checkCancelled,
           atualizado_em: now
         };
         
-        const result = db.prepare(`
-          INSERT OR IGNORE INTO leads (
-            id, empresa, telefone, cidade, estado, nicho, status, vendedor_id, 
-            origem, query_origem, endereco, site, ultima_mensagem, observacoes, criado_em, atualizado_em
-          ) VALUES (
-            @id, @empresa, @telefone, @cidade, @estado, @nicho, @status, @vendedor_id,
-            @origem, @query_origem, @endereco, @site, @ultima_mensagem, @observacoes, @criado_em, @atualizado_em
-          )
-        `).run(lead);
-        
-        if (result.changes === 0) {
-          console.log(`Lead "${empresa}" (${phoneClean}) foi inserido concorrentemente por outro processo. Ignorado.`);
-          continue;
+        if (!dryRun) {
+          const result = db.prepare(`
+            INSERT OR IGNORE INTO leads (
+              id, empresa, telefone, cidade, estado, nicho, status, vendedor_id, 
+              origem, query_origem, endereco, site, ultima_mensagem, observacoes, criado_em, atualizado_em
+            ) VALUES (
+              @id, @empresa, @telefone, @cidade, @estado, @nicho, @status, @vendedor_id,
+              @origem, @query_origem, @endereco, @site, @ultima_mensagem, @observacoes, @criado_em, @atualizado_em
+            )
+          `).run(lead);
+          
+          if (result.changes === 0) {
+            console.log(`Lead "${empresa}" (${phoneClean}) foi inserido concorrentemente por outro processo. Ignorado.`);
+            continue;
+          }
+        } else {
+          console.log(`[DryRun] Lead raspado com sucesso: ${empresa} - ${phoneClean}`);
         }
         
         // Adicionar aos Sets para evitar duplicados nas próximas iterações
@@ -440,7 +444,7 @@ export async function scrapeGoogleMaps(query, nicho, limit = 20, checkCancelled,
         leadsList.push(lead);
         console.log(`Lead salvo no banco: ${empresa} - ${phoneClean}`);
         
-        if (onLeadSaved) {
+        if (!dryRun && onLeadSaved) {
           try {
             await onLeadSaved(lead);
           } catch (callbackErr) {

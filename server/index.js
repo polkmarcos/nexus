@@ -2335,6 +2335,70 @@ app.post("/leads/:leadId/mensagens/enviar", async (req, res) => {
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
+// ADMIN SANDBOX ENDPOINTS
+app.post("/admin/sandbox/enviar", async (req, res) => {
+  try {
+    const { vendedorId, telefone, texto } = req.body;
+    if (!vendedorId || !telefone || !texto) {
+      return res.status(400).json({ ok: false, error: "Campos vendedorId, telefone e texto são obrigatórios." });
+    }
+
+    await enviarMensagemAvulsa(vendedorId, telefone, texto);
+    res.json({ ok: true, message: "Mensagem enviada com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/admin/sandbox/enviar-lote", async (req, res) => {
+  try {
+    const { vendedorId, telefones, texto, delay = 5000 } = req.body;
+    if (!vendedorId || !Array.isArray(telefones) || telefones.length === 0 || !texto) {
+      return res.status(400).json({ ok: false, error: "Campos vendedorId, telefones (array) e texto são obrigatórios." });
+    }
+
+    const session = sessions.get(vendedorId);
+    if (!session || session.status !== "connected") {
+      return res.status(400).json({ ok: false, error: "WhatsApp não conectado para este vendedor." });
+    }
+
+    // Run bulk dispatch in the background
+    (async () => {
+      console.log(`[Sandbox Lote] Iniciando disparo para ${telefones.length} números com delay ${delay}ms`);
+      for (let i = 0; i < telefones.length; i++) {
+        const tel = telefones[i];
+        try {
+          await enviarMensagemAvulsa(vendedorId, tel, texto);
+          console.log(`[Sandbox Lote] Enviado com sucesso para ${tel} (${i + 1}/${telefones.length})`);
+        } catch (e) {
+          console.error(`[Sandbox Lote] Erro ao enviar para ${tel}:`, e.message);
+        }
+        if (i < telefones.length - 1) {
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+      console.log(`[Sandbox Lote] Disparo em lote finalizado.`);
+    })().catch(console.error);
+
+    res.json({ ok: true, message: `Disparo em lote de ${telefones.length} mensagens iniciado em segundo plano.` });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/admin/sandbox/testar-captura", async (req, res) => {
+  try {
+    const { query, limit = 5 } = req.body;
+    if (!query) {
+      return res.status(400).json({ ok: false, error: "Campo query é obrigatório." });
+    }
+
+    console.log(`[Sandbox Scraper] Testando captura (dry-run) para query: "${query}", limit: ${limit}`);
+    const leads = await scrapeGoogleMaps(query, "Teste Sandbox", limit, null, null, true);
+    res.json({ ok: true, leads });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 app.listen(PORT, () => {
