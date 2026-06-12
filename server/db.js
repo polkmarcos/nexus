@@ -64,6 +64,7 @@ db.exec(`
     texto TEXT NOT NULL,
     ativa INTEGER DEFAULT 1,
     condicao_site TEXT DEFAULT 'qualquer',
+    tipo TEXT DEFAULT 'primaria',
     criado_em TEXT NOT NULL
   );
 
@@ -214,6 +215,10 @@ try {
 
 try {
   db.exec("ALTER TABLE mensagens ADD COLUMN condicao_site TEXT DEFAULT 'qualquer';");
+} catch (_) {}
+
+try {
+  db.exec("ALTER TABLE mensagens ADD COLUMN tipo TEXT DEFAULT 'primaria';");
 } catch (_) {}
 
 

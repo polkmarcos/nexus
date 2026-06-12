@@ -772,6 +772,58 @@ async function enviarRespostaAutomatica(vendedorId, lead, texto) {
  * @param {number} sentAt - Timestamp (ms) when the initial message was sent
  * @param {{ msgRobo: string, msgHumano: string }} msgsConfig
  */
+/**
+ * Recupera uma mensagem secundária ativa aleatória adaptada para o lead.
+ */
+function obterMensagemSecundaria(lead, vendedorId) {
+  const msgsAtivas = db.prepare("SELECT * FROM mensagens WHERE ativa = 1 AND tipo = 'secundaria'").all();
+  if (msgsAtivas.length === 0) return null;
+
+  const temSite = !!(lead.site && lead.site.trim() !== "" && lead.site !== "Não Informado" && lead.site !== "Não Informada");
+  const msgsFiltradas = msgsAtivas.filter(m => {
+    const cond = m.condicao_site || 'qualquer';
+    if (cond === 'com_site') return temSite;
+    if (cond === 'sem_site') return !temSite;
+    return true;
+  });
+
+  const msgsParaUsar = msgsFiltradas.length > 0 ? msgsFiltradas : msgsAtivas;
+  const msgEscolhida = msgsParaUsar[Math.floor(Math.random() * msgsParaUsar.length)];
+  let texto = msgEscolhida.texto;
+
+  // Substituir variáveis
+  const saudacao = getSaudacao();
+  let linkKiwify = "";
+  const vendedor = db.prepare("SELECT link_kiwify FROM vendedores WHERE id = ?").get(vendedorId);
+  if (vendedor && vendedor.link_kiwify) {
+    linkKiwify = vendedor.link_kiwify;
+  }
+  if (!linkKiwify) {
+    const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
+    if (globalConfig) {
+      linkKiwify = globalConfig.valor;
+    }
+  }
+
+  texto = texto
+    .replace(/{saudacao}/gi, saudacao)
+    .replace(/{empresa}/gi, lead.company_name || lead.empresa || "")
+    .replace(/{nicho}/gi, lead.nicho || "")
+    .replace(/{link_kiwify}/gi, linkKiwify || "");
+
+  return texto;
+}
+
+/**
+ * Monitors a lead for a reply after the initial message was sent.
+ * Runs in the background (do not await). Polls every 30 seconds for up to 4 hours.
+ * When a reply is detected, classifies it as bot or human and sends the appropriate response.
+ *
+ * @param {string} vendedorId
+ * @param {object} lead - Lead record from the DB
+ * @param {number} sentAt - Timestamp (ms) when the initial message was sent
+ * @param {{ msgRobo: string, msgHumano: string }} msgsConfig
+ */
 export async function monitorarRespostaLead(vendedorId, lead, sentAt, msgsConfig) {
   const POLL_INTERVAL_MS = 30_000;          // 30 seconds between checks
   const MAX_MONITOR_MS   = 4 * 60 * 60 * 1000; // 4 hours total
@@ -798,6 +850,41 @@ export async function monitorarRespostaLead(vendedorId, lead, sentAt, msgsConfig
     const session = sessions.get(vendedorId);
     if (!session || session.status !== 'connected') {
       console.log(`[Monitor] Sessão do vendedor ${vendedorId} encerrada. Encerrando monitor de ${lead.empresa}.`);
+      leadMonitorQueue.delete(lead.id);
+      break;
+    }
+
+    // 1. Check if there are active secondary messages
+    const temMensagensSecundarias = db.prepare("SELECT 1 FROM mensagens WHERE ativa = 1 AND tipo = 'secundaria'").get();
+
+    // 2. Timeout check: if secondary messages are active and 5 minutes passed, send it and terminate
+    if (temMensagensSecundarias && (Date.now() - startedAt >= 5 * 60 * 1000)) {
+      console.log(`[Monitor] 5 minutos sem resposta de ${lead.empresa}. Enviando mensagem secundária...`);
+      const textoSecundario = obterMensagemSecundaria(lead, vendedorId);
+      if (textoSecundario) {
+        const now = new Date().toISOString();
+        db.prepare(`
+          UPDATE leads SET status = 'Conversando', atualizado_em = ? WHERE id = ?
+        `).run(now, lead.id);
+
+        const idNote = 'sys_' + Math.random().toString(36).substring(2, 11);
+        db.prepare(`
+          INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
+          VALUES (?, ?, ?, 'system', ?, ?)
+        `).run(idNote, lead.id, vendedorId, `[Auto] Sem resposta após 5 minutos. Enviando mensagem secundária.`, now);
+
+        leadMonitorQueue.set(lead.id, { ...entry, resolved: true });
+
+        enviarRespostaAutomatica(vendedorId, lead, textoSecundario).then(() => {
+          const idMsgSent = 'wa_' + Math.random().toString(36).substring(2, 11);
+          const nowSent = new Date().toISOString();
+          db.prepare(`
+            INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
+            VALUES (?, ?, ?, 'out', ?, ?)
+          `).run(idMsgSent, lead.id, vendedorId, textoSecundario, nowSent);
+        }).catch(console.error);
+      }
+
       leadMonitorQueue.delete(lead.id);
       break;
     }
@@ -863,26 +950,35 @@ export async function monitorarRespostaLead(vendedorId, lead, sentAt, msgsConfig
             VALUES (?, ?, ?, 'in', ?, ?)
           `).run(idMsg, lead.id, vendedorId, msg.texto, now);
 
-          // Classify: bot or human?
-          const timestampStr = msg.prePlain || msg.timeStr;
-          const tipo = classificarResposta(msg.texto, sentAt, timestampStr);
-          let textoResposta = tipo === 'robo' ? msgRobo : msgHumano;
+          let textoResposta = null;
+          let noteMsg = "";
+          
+          if (temMensagensSecundarias) {
+            textoResposta = obterMensagemSecundaria(lead, vendedorId);
+            noteMsg = "[Auto] Cliente respondeu. Enviando mensagem secundária.";
+          } else {
+            // Classify: bot or human?
+            const timestampStr = msg.prePlain || msg.timeStr;
+            const tipo = classificarResposta(msg.texto, sentAt, timestampStr);
+            textoResposta = tipo === 'robo' ? msgRobo : msgHumano;
+            noteMsg = `[Auto] Detectado: ${tipo === 'robo' ? '🤖 Robô' : '👤 Humano'}`;
 
-          // Replace placeholders ({link_kiwify}, {empresa}) in auto-replies
-          if (textoResposta) {
-            let linkKiwify = "";
-            const vendedor = db.prepare("SELECT link_kiwify FROM vendedores WHERE id = ?").get(vendedorId);
-            if (vendedor && vendedor.link_kiwify) {
-              linkKiwify = vendedor.link_kiwify;
-            }
-            if (!linkKiwify) {
-              const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
-              if (globalConfig) {
-                linkKiwify = globalConfig.valor;
+            // Replace placeholders ({link_kiwify}, {empresa}) in auto-replies
+            if (textoResposta) {
+              let linkKiwify = "";
+              const vendedor = db.prepare("SELECT link_kiwify FROM vendedores WHERE id = ?").get(vendedorId);
+              if (vendedor && vendedor.link_kiwify) {
+                linkKiwify = vendedor.link_kiwify;
               }
+              if (!linkKiwify) {
+                const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
+                if (globalConfig) {
+                  linkKiwify = globalConfig.valor;
+                }
+              }
+              textoResposta = textoResposta.replace(/{link_kiwify}/g, linkKiwify || "");
+              textoResposta = textoResposta.replace(/{empresa}/g, lead.empresa || "");
             }
-            textoResposta = textoResposta.replace(/{link_kiwify}/g, linkKiwify || "");
-            textoResposta = textoResposta.replace(/{empresa}/g, lead.empresa || "");
           }
 
           // Update lead status
@@ -890,12 +986,12 @@ export async function monitorarRespostaLead(vendedorId, lead, sentAt, msgsConfig
             UPDATE leads SET status = 'Conversando', atualizado_em = ? WHERE id = ?
           `).run(now, lead.id);
 
-          // Save classification to mensagens_chat as a system note
+          // Save system note to mensagens_chat
           const idNote = 'sys_' + Math.random().toString(36).substring(2, 11);
           db.prepare(`
             INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
             VALUES (?, ?, ?, 'system', ?, ?)
-          `).run(idNote, lead.id, vendedorId, `[Auto] Detectado: ${tipo === 'robo' ? '🤖 Robô' : '👤 Humano'}`, now);
+          `).run(idNote, lead.id, vendedorId, noteMsg, now);
 
           // Mark as resolved
           leadMonitorQueue.set(lead.id, { ...entry, resolved: true });
@@ -906,8 +1002,15 @@ export async function monitorarRespostaLead(vendedorId, lead, sentAt, msgsConfig
 
           // Send the appropriate response (waits for any ongoing dispatch to finish)
           if (textoResposta && textoResposta.trim()) {
-            console.log(`[Monitor] Enviando resposta automática (${tipo}) para ${lead.empresa}...`);
-            enviarRespostaAutomatica(vendedorId, lead, textoResposta).catch(console.error);
+            console.log(`[Monitor] Enviando resposta automática para ${lead.empresa}...`);
+            enviarRespostaAutomatica(vendedorId, lead, textoResposta).then(() => {
+              const idMsgSent = 'wa_' + Math.random().toString(36).substring(2, 11);
+              const nowSent = new Date().toISOString();
+              db.prepare(`
+                INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
+                VALUES (?, ?, ?, 'out', ?, ?)
+              `).run(idMsgSent, lead.id, vendedorId, textoResposta, nowSent);
+            }).catch(console.error);
           }
 
           leadMonitorQueue.delete(lead.id);
@@ -1123,6 +1226,7 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
 
         // Wait a moment for transmission
         await new Promise(r => setTimeout(r, 4000));
+        await arquivarConversaAtiva(page).catch(console.error);
 
         const now = new Date().toISOString();
         db.prepare(`
@@ -1154,6 +1258,48 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
     return resultados;
   } finally {
     session.isSending = false;
+  }
+}
+
+/**
+ * Arquiva a conversa ativa no cabeçalho do chat do WhatsApp Web.
+ */
+async function arquivarConversaAtiva(page) {
+  try {
+    const headerMenuSelector = '#main header [data-testid="menu"], #main header [data-testid="conversation-menu-button"], #main header span[data-icon="menu"], #main header span[data-icon="overflow-menu-vertical"]';
+    const menuBtn = await page.waitForSelector(headerMenuSelector, { timeout: 8000 }).catch(() => null);
+    if (!menuBtn) {
+      console.log("[Archive] Não foi possível encontrar o botão de menu no cabeçalho do chat.");
+      return false;
+    }
+    await menuBtn.click();
+    await new Promise(r => setTimeout(r, 800)); // Espera abrir o menu dropdown
+    
+    // Procura pela opção que contém "arquivar" ou "archive" no menu dropdown
+    const items = await page.$$('div[role="button"], [role="menuitem"], span, div');
+    let clicked = false;
+    for (const item of items) {
+      const text = await page.evaluate(el => el.innerText || "", item);
+      if (/arquivar|archive/i.test(text)) {
+        await item.click().catch(() => {});
+        clicked = true;
+        console.log(`[Archive] Opção de menu "${text.trim()}" clicada com sucesso.`);
+        break;
+      }
+    }
+    
+    if (!clicked) {
+      // Fecha o menu apertando Escape se não encontrou o item
+      await page.keyboard.press("Escape").catch(() => {});
+      console.log("[Archive] Opção 'Arquivar' não encontrada no menu.");
+      return false;
+    }
+    
+    await new Promise(r => setTimeout(r, 1500)); // Espera animação de arquivamento
+    return true;
+  } catch (err) {
+    console.error("[Archive] Erro ao arquivar conversa ativa:", err.message);
+    return false;
   }
 }
 
@@ -1267,6 +1413,7 @@ export async function enviarMensagemAvulsa(vendedorId, telefone, texto) {
     }
 
     await new Promise(r => setTimeout(r, 4000));
+    await arquivarConversaAtiva(page).catch(console.error);
 
     // Update lead's ultima_mensagem in DB
     const now = new Date().toISOString();

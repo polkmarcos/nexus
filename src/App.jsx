@@ -32,6 +32,19 @@ function validarCPF(cpf) {
   return true;
 }
 
+function formatarAcesso(isoString) {
+  if (!isoString) return "Nunca acessou";
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return "Nunca acessou";
+    const data = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+    const hora = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    return `${data} às ${hora}`;
+  } catch (e) {
+    return "Nunca acessou";
+  }
+}
+
 function buscarUsuarioSalvo() {
   const salvo = localStorage.getItem("usuarioLogado");
   if (!salvo) return null;
@@ -660,6 +673,8 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
   useEffect(() => {
     carregarDados();
     carregarConfigs();
+    const interval = setInterval(carregarDados, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -723,6 +738,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
               <tr>
                 <th>Vendedor</th>
                 <th>Nível</th>
+                <th>Atividade / Robô</th>
                 <th>Status</th>
                 <th>Leads Atribuídos</th>
                 <th>Limite Diário</th>
@@ -735,7 +751,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
             <tbody>
               {vendedores.length === 0 ? (
                 <tr>
-                  <td colSpan="9" style={{ textAlign: "center" }}>Nenhum vendedor registrado.</td>
+                  <td colSpan="10" style={{ textAlign: "center" }}>Nenhum vendedor registrado.</td>
                 </tr>
               ) : (
                 vendedores.map(v => (
@@ -768,6 +784,79 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
                       {v.eh_gerente === 0 && <span className="badge badge-vacuo" style={{ fontSize: "0.75rem", padding: "2px 6px" }}>Vendedor</span>}
                       {v.eh_gerente === 1 && <span className="badge badge-prevenda" style={{ fontSize: "0.75rem", padding: "2px 6px", textTransform: "none" }}>Gerente Base</span>}
                       {v.eh_gerente === 2 && <span className="badge" style={{ fontSize: "0.75rem", padding: "2px 6px", textTransform: "none", backgroundColor: "rgba(139, 92, 246, 0.15)", color: "#8b5cf6", border: "1px solid rgba(139, 92, 246, 0.3)" }}>Gerente Pro</span>}
+                    </td>
+                    <td style={{ verticalAlign: "middle" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                        <div>
+                          {v.ultimo_acesso && (Date.now() - new Date(v.ultimo_acesso).getTime() < 5 * 60 * 1000) ? (
+                            <span className="badge" style={{
+                              backgroundColor: "rgba(16, 185, 129, 0.15)",
+                              color: "#10b981",
+                              border: "1px solid rgba(16, 185, 129, 0.3)",
+                              fontSize: "0.75rem",
+                              padding: "3px 8px",
+                              textTransform: "none",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px"
+                            }}>
+                              <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#10b981", display: "inline-block" }}></span>
+                              Online
+                            </span>
+                          ) : (
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                              <span className="badge" style={{
+                                backgroundColor: "rgba(107, 114, 128, 0.15)",
+                                color: "#6b7280",
+                                border: "1px solid rgba(107, 114, 128, 0.3)",
+                                fontSize: "0.75rem",
+                                padding: "3px 8px",
+                                textTransform: "none",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px"
+                              }}>
+                                <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#6b7280", display: "inline-block" }}></span>
+                                Offline
+                              </span>
+                              <small style={{ fontSize: "0.68rem", color: "var(--text-tertiary)", marginTop: "2px" }}>
+                                {formatarAcesso(v.ultimo_acesso)}
+                              </small>
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          {v.robo_ativo === 1 ? (
+                            <span className="badge" style={{
+                              backgroundColor: "rgba(139, 92, 246, 0.15)",
+                              color: "#8b5cf6",
+                              border: "1px solid rgba(139, 92, 246, 0.3)",
+                              fontSize: "0.75rem",
+                              padding: "3px 8px",
+                              textTransform: "none",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px"
+                            }}>
+                              ⚡ Robô Disparado
+                            </span>
+                          ) : (
+                            <span className="badge" style={{
+                              backgroundColor: "rgba(245, 158, 11, 0.15)",
+                              color: "#f59e0b",
+                              border: "1px solid rgba(245, 158, 11, 0.3)",
+                              fontSize: "0.75rem",
+                              padding: "3px 8px",
+                              textTransform: "none",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px"
+                            }}>
+                              ⏸️ Robô Parado
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </td>
                     <td>
                       <span className={`badge ${v.ativo ? "badge-prevenda" : "badge-vacuo"}`}>
@@ -1165,6 +1254,8 @@ function AdminVendedores() {
 
   useEffect(() => {
     carregarVendedores();
+    const interval = setInterval(carregarVendedores, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   function formatarCPF(valor) {
@@ -1371,6 +1462,7 @@ function AdminVendedores() {
                 <th>Vendedor</th>
                 <th>Contato / Link Kiwify</th>
                 <th>Limite Diário</th>
+                <th>Atividade / Robô</th>
                 <th>Status</th>
                 <th>Ações</th>
               </tr>
@@ -1378,11 +1470,11 @@ function AdminVendedores() {
             <tbody>
               {vendedores.length === 0 ? (
                 <tr>
-                  <td colSpan="5" style={{ textAlign: "center" }}>Nenhum vendedor cadastrado.</td>
+                  <td colSpan="6" style={{ textAlign: "center" }}>Nenhum vendedor cadastrado.</td>
                 </tr>
               ) : vendedores.filter(v => v.nome.toLowerCase().includes(filtroNome.toLowerCase())).length === 0 ? (
                 <tr>
-                  <td colSpan="5" style={{ textAlign: "center" }}>Nenhum vendedor encontrado com o nome "{filtroNome}".</td>
+                  <td colSpan="6" style={{ textAlign: "center" }}>Nenhum vendedor encontrado com o nome "{filtroNome}".</td>
                 </tr>
               ) : (
                 vendedores
@@ -1413,6 +1505,79 @@ function AdminVendedores() {
                         )}
                       </td>
                       <td>{v.limite_diario} leads/dia</td>
+                      <td style={{ verticalAlign: "middle" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          <div>
+                            {v.ultimo_acesso && (Date.now() - new Date(v.ultimo_acesso).getTime() < 5 * 60 * 1000) ? (
+                              <span className="badge" style={{
+                                backgroundColor: "rgba(16, 185, 129, 0.15)",
+                                color: "#10b981",
+                                border: "1px solid rgba(16, 185, 129, 0.3)",
+                                fontSize: "0.75rem",
+                                padding: "3px 8px",
+                                textTransform: "none",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px"
+                              }}>
+                                <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#10b981", display: "inline-block" }}></span>
+                                Online
+                              </span>
+                            ) : (
+                              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                                <span className="badge" style={{
+                                  backgroundColor: "rgba(107, 114, 128, 0.15)",
+                                  color: "#6b7280",
+                                  border: "1px solid rgba(107, 114, 128, 0.3)",
+                                  fontSize: "0.75rem",
+                                  padding: "3px 8px",
+                                  textTransform: "none",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "4px"
+                                }}>
+                                  <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#6b7280", display: "inline-block" }}></span>
+                                  Offline
+                                </span>
+                                <small style={{ fontSize: "0.68rem", color: "var(--text-tertiary)", marginTop: "2px" }}>
+                                  {formatarAcesso(v.ultimo_acesso)}
+                                </small>
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            {v.robo_ativo === 1 ? (
+                              <span className="badge" style={{
+                                backgroundColor: "rgba(139, 92, 246, 0.15)",
+                                color: "#8b5cf6",
+                                border: "1px solid rgba(139, 92, 246, 0.3)",
+                                fontSize: "0.75rem",
+                                padding: "3px 8px",
+                                textTransform: "none",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px"
+                              }}>
+                                ⚡ Robô Disparado
+                              </span>
+                            ) : (
+                              <span className="badge" style={{
+                                backgroundColor: "rgba(245, 158, 11, 0.15)",
+                                color: "#f59e0b",
+                                border: "1px solid rgba(245, 158, 11, 0.3)",
+                                fontSize: "0.75rem",
+                                padding: "3px 8px",
+                                textTransform: "none",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px"
+                              }}>
+                                ⏸️ Robô Parado
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
                       <td>
                         <span className={`badge ${v.ativo ? "badge-prevenda" : "badge-vacuo"}`}>
                           {v.ativo ? "Ativo" : "Inativo"}
@@ -2533,11 +2698,23 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
         }
         return;
       }
-      const endpoint = abaAtiva === "prospeccao" ? "/mensagens" : "/respostas-rapidas";
+      
+      const isProsp = abaAtiva === "prospeccao";
+      const isSec = abaAtiva === "secundaria";
+      
+      let endpoint;
+      if (isProsp) {
+        endpoint = "/mensagens?tipo=primaria";
+      } else if (isSec) {
+        endpoint = "/mensagens?tipo=secundaria";
+      } else {
+        endpoint = "/respostas-rapidas";
+      }
+
       const res = await fetch(`${API_URL}${endpoint}`);
       const data = await res.json();
       if (data.ok) {
-        if (abaAtiva === "prospeccao") {
+        if (isProsp || isSec) {
           setMensagens(data.mensagens || []);
         } else {
           setMensagens(data.templates || []);
@@ -2585,12 +2762,20 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
 
     try {
       const isProsp = abaAtiva === "prospeccao";
-      const endpoint = isProsp ? "/mensagens" : "/respostas-rapidas";
+      const isSec = abaAtiva === "secundaria";
+      const isMsgTemplate = isProsp || isSec;
+
+      const endpoint = isMsgTemplate ? "/mensagens" : "/respostas-rapidas";
       const url = editingId ? `${API_URL}${endpoint}/${editingId}` : `${API_URL}${endpoint}`;
       const method = editingId ? "PUT" : "POST";
       
-      const body = isProsp 
-        ? { nome: form.nome, texto: form.texto, condicao_site: form.condicao_site }
+      const body = isMsgTemplate 
+        ? { 
+            nome: form.nome, 
+            texto: form.texto, 
+            condicao_site: form.condicao_site,
+            tipo: isProsp ? "primaria" : "secundaria"
+          }
         : { titulo: form.nome, texto: form.texto };
 
       const res = await fetch(url, {
@@ -2601,7 +2786,7 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
       const data = await res.json();
       if (res.ok) {
         setSucesso(editingId ? "Atualizado com sucesso!" : "Criado com sucesso!");
-        setForm({ nome: "", texto: "" });
+        setForm({ nome: "", texto: "", condicao_site: "qualquer" });
         setEditingId(null);
         carregarDados();
       } else {
@@ -2625,8 +2810,9 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
 
   async function iniciarEdicao(m) {
     setEditingId(m.id);
+    const isMsgTemplate = abaAtiva === "prospeccao" || abaAtiva === "secundaria";
     setForm({ 
-      nome: abaAtiva === "prospeccao" ? m.nome : m.titulo, 
+      nome: isMsgTemplate ? m.nome : m.titulo, 
       texto: m.texto,
       condicao_site: m.condicao_site || "qualquer"
     });
@@ -2650,7 +2836,8 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
     setErro("");
     setSucesso("");
     try {
-      const endpoint = abaAtiva === "prospeccao" ? "/mensagens" : "/respostas-rapidas";
+      const isMsgTemplate = abaAtiva === "prospeccao" || abaAtiva === "secundaria";
+      const endpoint = isMsgTemplate ? "/mensagens" : "/respostas-rapidas";
       const res = await fetch(`${API_URL}${endpoint}/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (res.ok) {
@@ -2668,6 +2855,8 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
   }
 
   const isProsp = abaAtiva === "prospeccao";
+  const isSec = abaAtiva === "secundaria";
+  const isProspOrSec = isProsp || isSec;
   const isAutoReply = abaAtiva === "auto-reply";
 
   return (
@@ -2675,10 +2864,12 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
       <h1>Modelos de Mensagem</h1>
       <p className="subtitle">
         {isProsp 
-          ? "Configure o modelo de mensagem que os vendedores dispararão automaticamente via WhatsApp Web."
-          : isAutoReply
-            ? "Configure as mensagens enviadas automaticamente quando o lead responder — robô ou humano."
-            : "Configure as respostas rápidas pré-salvas que os vendedores usarão no chat de duas vias."}
+          ? "Configure os modelos de mensagens que os vendedores dispararão automaticamente como contato inicial."
+          : isSec
+            ? "Configure as mensagens secundárias (follow-up) enviadas após 5 minutos ou ao receber resposta."
+            : isAutoReply
+              ? "Configure as mensagens enviadas automaticamente quando o lead responder — se não usar mensagens secundárias."
+              : "Configure as respostas rápidas pré-salvas que os vendedores usarão no chat de duas vias."}
       </p>
 
       {/* Tabs */}
@@ -2691,6 +2882,13 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
           📢 Prospecção Automática
         </button>
         <button
+          className={`btn ${isSec ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => { setAbaAtiva("secundaria"); cancelarEdicao(); }}
+          type="button"
+        >
+          🔗 Mensagens Secundárias
+        </button>
+        <button
           className={`btn ${isAutoReply ? "btn-primary" : "btn-secondary"}`}
           onClick={() => { setAbaAtiva("auto-reply"); cancelarEdicao(); }}
           type="button"
@@ -2699,7 +2897,7 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
           🤖 Resposta Automática (Robô / Humano)
         </button>
         <button
-          className={`btn ${!isProsp && !isAutoReply ? "btn-primary" : "btn-secondary"}`}
+          className={`btn ${abaAtiva === "chat-rapido" ? "btn-primary" : "btn-secondary"}`}
           onClick={() => { setAbaAtiva("chat-rapido"); cancelarEdicao(); }}
           type="button"
         >
@@ -2819,7 +3017,7 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
         </>
       )}
 
-      {/* ── PROSPECCAO / CHAT-RAPIDO TABS ── */}
+      {/* ── PROSPECCAO / SECUNDARIA / CHAT-RAPIDO TABS ── */}
       {!isAutoReply && (
         <>
           {erro && <div className="alert alert-error">{erro}</div>}
@@ -2828,13 +3026,13 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
           <div className="card">
             <h2>
               {editingId 
-                ? (isProsp ? "Editar Modelo de Mensagem" : "Editar Resposta Rápida")
-                : (isProsp ? "Criar Novo Modelo" : "Criar Nova Resposta Rápida")}
+                ? (isProspOrSec ? "Editar Modelo de Mensagem" : "Editar Resposta Rápida")
+                : (isProspOrSec ? "Criar Novo Modelo" : "Criar Nova Resposta Rápida")}
             </h2>
             <form onSubmit={salvarMensagem}>
               <div className="form-group" style={{ marginBottom: "15px" }}>
                 <label>
-                  {isProsp 
+                  {isProspOrSec 
                     ? "Nome do Modelo (Identificação Interna)" 
                     : "Título do Atalho (Ex: Preço, Como Funciona, Pix)"}
                 </label>
@@ -2842,11 +3040,11 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
                   name="nome" 
                   value={form.nome} 
                   onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} 
-                  placeholder={isProsp ? "Ex: Primeiro Contato - Padarias" : "Ex: Link de Pagamento"} 
+                  placeholder={isProspOrSec ? "Ex: Primeiro Contato - Padarias" : "Ex: Link de Pagamento"} 
                   required 
                 />
               </div>
-              {isProsp && (
+              {isProspOrSec && (
                 <div className="form-group" style={{ marginBottom: "15px" }}>
                   <label>🌐 Condição de Envio (Baseado no Site do Lead)</label>
                   <select
@@ -2873,7 +3071,7 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
               )}
               <div className="form-group" style={{ marginBottom: "15px" }}>
                 <label>
-                  {isProsp 
+                  {isProspOrSec 
                     ? "Texto da Mensagem (Suporta variáveis)" 
                     : "Texto da Resposta (Suporta variáveis)"}
                 </label>
@@ -2882,13 +3080,13 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
                   value={form.texto} 
                   onChange={e => setForm(f => ({ ...f, texto: e.target.value }))} 
                   rows="6" 
-                  placeholder={isProsp ? "Olá {saudacao}! Vi a empresa {empresa} no..." : "Excelente! Compre no link seguro: {link_kiwify}"} 
+                  placeholder={isProspOrSec ? "Olá {saudacao}! Vi a empresa {empresa} no..." : "Excelente! Compre no link seguro: {link_kiwify}"} 
                   required 
                 />
                 <small style={{ color: "var(--text-secondary)", marginTop: "4px" }}>
-                  {isProsp ? (
+                  {isProspOrSec ? (
                     <>
-                      Variáveis dinâmicas suportadas: <code style={{ color: "var(--primary)" }}>{"{saudacao}"}</code> (Bom dia/Boa tarde/Boa noite), <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code> (Nome do lead), <code style={{ color: "var(--primary)" }}>{"{nicho}"}</code> (Nicho comercial).
+                      Variáveis dinâmicas suportadas: <code style={{ color: "var(--primary)" }}>{"{saudacao}"}</code> (Bom dia/Boa tarde/Boa noite), <code style={{ color: "var(--primary)" }}>{"{empresa}"}</code> (Nome do lead), <code style={{ color: "var(--primary)" }}>{"{nicho}"}</code> (Nicho comercial), <code style={{ color: "var(--primary)" }}>{"{link_kiwify}"}</code> (Link do vendedor).
                     </>
                   ) : (
                     <>
@@ -2911,8 +3109,8 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
           </div>
 
           <div className="card">
-            <h2>{isProsp ? "Modelos Salvos" : "Respostas Rápidas Salvas"}</h2>
-            {isProsp && (
+            <h2>{isProspOrSec ? (isProsp ? "Modelos Salvos" : "Mensagens Secundárias Salvas") : "Respostas Rápidas Salvas"}</h2>
+            {isProspOrSec && (
               <p className="subtitle" style={{ fontSize: "0.85rem", marginTop: "-5px", marginBottom: "15px" }}>
                 Ative múltiplos modelos simultaneamente para rotacionar as mensagens de modo aleatório nos disparos automáticos.
               </p>
@@ -2921,18 +3119,18 @@ function AdminMensagens({ abaAtiva, setAbaAtiva }) {
               <p>Nenhum modelo cadastrado.</p>
             ) : (
               mensagens.map(m => (
-                <div className={`msg-item ${isProsp && m.ativa === 1 ? "active" : ""}`} key={m.id}>
+                <div className={`msg-item ${isProspOrSec && m.ativa === 1 ? "active" : ""}`} key={m.id}>
                   <div style={{ flex: 1, paddingRight: "15px" }}>
                     <h3 style={{ margin: "0 0 8px 0", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                      {isProsp ? m.nome : m.titulo} 
-                      {isProsp && m.ativa === 1 && <span className="badge badge-prevenda">Ativo em Rotação</span>}
-                      {isProsp && m.condicao_site === "com_site" && <span className="badge" style={{ background: "rgba(34, 197, 94, 0.15)", color: "#22c55e", border: "1px solid rgba(34, 197, 94, 0.3)", padding: "2px 8px" }}>🌐 Apenas COM Site</span>}
-                      {isProsp && m.condicao_site === "sem_site" && <span className="badge" style={{ background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.3)", padding: "2px 8px" }}>🚫 Apenas SEM Site</span>}
+                      {isProspOrSec ? m.nome : m.titulo} 
+                      {isProspOrSec && m.ativa === 1 && <span className="badge badge-prevenda">Ativo em Rotação</span>}
+                      {isProspOrSec && m.condicao_site === "com_site" && <span className="badge" style={{ background: "rgba(34, 197, 94, 0.15)", color: "#22c55e", border: "1px solid rgba(34, 197, 94, 0.3)", padding: "2px 8px" }}>🌐 Apenas COM Site</span>}
+                      {isProspOrSec && m.condicao_site === "sem_site" && <span className="badge" style={{ background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.3)", padding: "2px 8px" }}>🚫 Apenas SEM Site</span>}
                     </h3>
                     <p style={{ whiteSpace: "pre-wrap", color: "var(--text-secondary)", fontSize: "0.95rem", margin: 0 }}>{m.texto}</p>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignSelf: "center" }}>
-                    {isProsp && (
+                    {isProspOrSec && (
                       <button 
                         className={`btn ${m.ativa === 1 ? "btn-secondary" : "btn-primary"}`} 
                         style={{ padding: "6px 12px", fontSize: "0.85rem", whiteSpace: "nowrap" }} 
@@ -3773,6 +3971,8 @@ function VendedorDashboard({ usuarioLogado, setUsuarioLogado }) {
 
   useEffect(() => {
     carregarStats();
+    const interval = setInterval(carregarStats, 30000);
+    return () => clearInterval(interval);
   }, [usuarioLogado.id]);
 
   async function ativarModoGerente() {
@@ -4469,9 +4669,6 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
 
       if (res.ok) {
         setSucesso(data.message);
-        if (isTeste) {
-          setShowTestNotice(true);
-        }
         setIsSending(true);
         // Recarregar leads depois de um tempo para refletir os novos
         setTimeout(() => {
@@ -4486,39 +4683,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
     }
   }
 
-  async function iniciarVendasTeste() {
-    setErro("");
-    setSucesso("");
-    
-    if (whatsappStatus !== "connected") {
-      setErro("Seu WhatsApp não está conectado. Acesse o menu 'Conectar WhatsApp' antes de disparar.");
-      return;
-    }
 
-    try {
-      // O servidor raspa e dispara em pipeline. Não precisamos coletar antes.
-      const resDisparo = await fetch(`${API_URL}/whatsapp/disparar/${usuarioLogado.id}`, { 
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({})
-      });
-      const dataDisparo = await resDisparo.json();
-
-      if (resDisparo.ok) {
-        setSucesso(dataDisparo.message || "Disparo de teste iniciado! O sistema vai raspar e enviar mensagens automaticamente.");
-        setShowTestNotice(true);
-        setIsSending(true);
-        setTimeout(() => {
-          carregarLeads();
-          checarStatusWhatsapp();
-        }, 5000);
-      } else {
-        setErro(dataDisparo.error);
-      }
-    } catch (e) {
-      setErro("Erro de comunicação com o servidor ao iniciar vendas de teste.");
-    }
-  }
 
   async function coletarLeads() {
     setErro("");
@@ -4601,7 +4766,6 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
   }
 
   const totalEnviados = leads.filter(l => l.status === "Mensagem enviada" || l.status === "Pré-venda feita" || l.status === "Comprou").length;
-  const isTeste = !usuarioLogado.opcoes_chip || usuarioLogado.opcoes_chip === 'pendente';
   const temVendasIniciadas = leads.length > 0;
 
   // Filter out unmessaged leads from visible list
@@ -4635,132 +4799,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
     }
   }
 
-  if (isTeste && !temVendasIniciadas && !isSending) {
-    return (
-      <section>
-        <h1>Minha Carteira de Leads</h1>
-        <p className="subtitle">Gerencie contatos, dispare mensagens automatizadas via WhatsApp Web e qualifique suas negociações.</p>
 
-        {erro && <div className="alert alert-error">{erro}</div>}
-        {sucesso && <div className="alert alert-success">{sucesso}</div>}
-
-        <div className="card" style={{
-          background: "linear-gradient(135deg, rgba(217, 119, 6, 0.06) 0%, rgba(251, 191, 36, 0.04) 100%)",
-          border: "1px solid rgba(217, 119, 6, 0.2)",
-          borderRadius: "16px",
-          padding: "40px 24px",
-          textAlign: "center",
-          maxWidth: "650px",
-          margin: "40px auto",
-          boxShadow: "0 20px 40px rgba(0, 0, 0, 0.15)",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: "24px"
-        }}>
-          <div style={{
-            width: "80px",
-            height: "80px",
-            borderRadius: "50%",
-            background: "rgba(217, 119, 6, 0.1)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "2.5rem",
-            color: "var(--primary)",
-            marginBottom: "8px",
-            boxShadow: "0 0 20px rgba(217, 119, 6, 0.2)"
-          }}>
-            ⚡
-          </div>
-          
-          <div style={{ maxWidth: "500px" }}>
-            <h2 style={{ margin: "0 0 12px 0", fontSize: "1.75rem", fontWeight: "800", color: "var(--text-primary)" }}>
-              Ative sua Máquina de Vendas
-            </h2>
-            <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "1.05rem", lineHeight: "1.6" }}>
-              Como novo vendedor, você passará pela <strong>Fase de Teste</strong>. Você receberá <strong>10 leads qualificados</strong> para iniciar os disparos de mensagens automáticas imediatamente.
-            </p>
-          </div>
-
-          <div style={{
-            width: "100%",
-            background: "var(--bg-tertiary)",
-            borderRadius: "12px",
-            padding: "20px",
-            textAlign: "left",
-            border: "1px solid var(--border-color)"
-          }}>
-            <h4 style={{ margin: "0 0 15px 0", fontSize: "0.95rem", color: "var(--text-primary)", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Requisitos para Ativação:
-            </h4>
-            
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <span style={{ 
-                  fontSize: "1.1rem", 
-                  color: whatsappStatus === "connected" ? "var(--success)" : "var(--danger)" 
-                }}>
-                  {whatsappStatus === "connected" ? "✓" : "✗"}
-                </span>
-                <div>
-                  <span style={{ fontSize: "0.95rem", fontWeight: "600", color: "var(--text-primary)" }}>Conectar WhatsApp:</span>{" "}
-                  <span style={{ 
-                    fontSize: "0.9rem", 
-                    fontWeight: "700", 
-                    color: whatsappStatus === "connected" ? "var(--success)" : "var(--danger)",
-                    background: whatsappStatus === "connected" ? "rgba(217, 119, 6, 0.1)" : "rgba(239, 68, 68, 0.1)",
-                    padding: "2px 8px",
-                    borderRadius: "4px"
-                  }}>
-                    {whatsappStatus === "connected" ? "CONECTADO" : "DESCONECTADO"}
-                  </span>
-                </div>
-              </div>
-              
-              {whatsappStatus !== "connected" && (
-                <p style={{ margin: "0 0 0 24px", fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-                  ⚠️ Acesse a tela <strong>"Conectar WhatsApp"</strong> no menu lateral para escanear o QR Code antes de continuar.
-                </p>
-              )}
-
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <span style={{ fontSize: "1.1rem", color: "var(--primary)" }}>✓</span>
-                <div>
-                  <span style={{ fontSize: "0.95rem", fontWeight: "600", color: "var(--text-primary)" }}>Envio Automático:</span>{" "}
-                  <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>
-                    O robô começará a oferecer o produto aos leads assim que você clicar no botão.
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div style={{ width: "100%" }}>
-            <button 
-              className="btn btn-primary pulse" 
-              onClick={iniciarVendasTeste} 
-              disabled={whatsappStatus !== "connected"}
-              style={{
-                width: "100%",
-                padding: "16px 24px",
-                fontSize: "1.1rem",
-                fontWeight: "700",
-                borderRadius: "12px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "10px",
-                boxShadow: whatsappStatus === "connected" ? "0 10px 20px rgba(217, 119, 6, 0.25)" : "none"
-              }}
-            >
-              🚀 Iniciar Vendas (Fase de Teste)
-            </button>
-          </div>
-        </div>
-      </section>
-    );
-  }
 
   return (
     <section>
@@ -4770,54 +4809,25 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
       {erro && <div className="alert alert-error">{erro}</div>}
       {sucesso && <div className="alert alert-success">{sucesso}</div>}
 
-      {/* Aviso de Fase de Teste e Esteira de Chips */}
-      {(!usuarioLogado.opcoes_chip || usuarioLogado.opcoes_chip === 'pendente') && totalEnviados >= 10 && (
-        <div className="card" style={{ 
-          background: "linear-gradient(135deg, rgba(251, 191, 36, 0.08) 0%, rgba(217, 119, 6, 0.05) 100%)", 
-          border: "1px solid rgba(251, 191, 36, 0.3)", 
-          borderRadius: "16px",
-          padding: "24px",
-          marginBottom: "24px",
-          boxShadow: "0 8px 32px rgba(251, 191, 36, 0.05)",
-          textAlign: "left"
-        }}>
-          <h3 style={{ color: "var(--accent-gold)", display: "flex", alignItems: "center", gap: "8px", margin: "0 0 12px 0", fontSize: "1.15rem", fontWeight: "700" }}>
-            ⚡ Fase de Teste e Esteira de Chips
-          </h3>
-          <p style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: "1.6", margin: "0 0 12px 0" }}>
-            Como novo vendedor, <strong>você está em fase de teste com limite de 10 leads por dia</strong>. Para continuar e liberar o acesso total de 25 leads diários, escolha uma das opções abaixo:
-          </p>
-          <ol style={{ paddingLeft: "20px", fontSize: "0.95rem", color: "var(--text-secondary)", lineHeight: "1.6", margin: "0 0 20px 0" }}>
-            <li style={{ marginBottom: "8px" }}>
-              <strong>Comprar um chip novo de R$ 15,00:</strong> Aquecer o chip por 14 dias para evitar bloqueios. Sua conta entrará em suspensão durante esse período.
-            </li>
-            <li style={{ marginBottom: "8px" }}>
-              <strong>Usar o seu chip pessoal:</strong> Como ele já está aquecido, você pode continuar vendendo com limite total de 25 leads diários.
-            </li>
-          </ol>
-          <div style={{ background: "rgba(251, 191, 36, 0.04)", borderLeft: "3px solid var(--accent-gold)", padding: "12px 16px", borderRadius: "0 8px 8px 0", marginBottom: "20px" }}>
-            <p style={{ fontSize: "0.9rem", color: "var(--text-primary)", lineHeight: "1.5", margin: 0 }}>
-              <strong>Sugestão:</strong> Compre um chip novo e use como pessoal, e esse atual vira sua máquina de vendas. Se ele bloquear daqui a um mês, repita o processo da esteira de chips!
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginTop: "15px" }}>
-            <button 
-              className="btn btn-success" 
-              onClick={() => selecionarOpcaoChip("pessoal")}
-              style={{ margin: 0, padding: "10px 20px", fontSize: "0.9rem", fontWeight: "600" }}
-            >
-              🚀 Usarei meu chip pessoal como máquina de vendas
-            </button>
-            <button 
-              className="btn btn-warning" 
-              onClick={() => selecionarOpcaoChip("novo")}
-              style={{ margin: 0, padding: "10px 20px", fontSize: "0.9rem", fontWeight: "600", background: "#d97706", borderColor: "#d97706", color: "white" }}
-            >
-              🛒 Comprar chip novo e aquecer (Suspender por 14 dias)
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Aviso de Limite Diário e Risco de Bloqueio */}
+      <div className="card" style={{ 
+        background: "linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(217, 119, 6, 0.05) 100%)", 
+        border: "1px solid rgba(245, 158, 11, 0.3)", 
+        borderRadius: "16px",
+        padding: "24px",
+        marginBottom: "24px",
+        boxShadow: "0 8px 32px rgba(245, 158, 11, 0.05)",
+        textAlign: "left"
+      }}>
+        <h3 style={{ color: "#d97706", display: "flex", alignItems: "center", gap: "8px", margin: "0 0 12px 0", fontSize: "1.15rem", fontWeight: "700" }}>
+          ⚠️ Atenção: Risco de Bloqueio no WhatsApp
+        </h3>
+        <p style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: "1.6", margin: 0 }}>
+          Se você exagerar na quantidade de envios diários, o WhatsApp pode bloquear ou banir o seu número. 
+          Recomendamos fortemente a <strong>sugestão de 10 leads por dia</strong> para manter seu chip aquecido e seguro.
+          Atualmente, sua conta está configurada com um limite diário de até <strong>{stats.limite_diario} leads/dia</strong>.
+        </p>
+      </div>
 
       <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
@@ -4827,11 +4837,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
               {statusUnicos.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
-          {isTeste && (
-            <span className="badge badge-success pulse" style={{ padding: "6px 12px", fontSize: "0.85rem", borderRadius: "6px", textTransform: "none", background: "var(--primary-light)", color: "var(--primary)", border: "1px solid var(--primary)", margin: 0 }}>
-              🎯 Modo de Teste: Limite de 10 Leads
-            </span>
-          )}
+
         </div>
 
         <div style={{ display: "flex", gap: "15px", alignItems: "center", flexWrap: "wrap" }}>
@@ -4846,7 +4852,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
             </button>
           ) : (
             <button className="btn btn-primary" onClick={dispararMensagensAutomaticas} disabled={whatsappStatus !== "connected"}>
-              {isTeste ? "🚀 Iniciar Vendas (Fase de Teste)" : "🚀 Iniciar Vendas"}
+              🚀 Iniciar Vendas
             </button>
           )}
         </div>

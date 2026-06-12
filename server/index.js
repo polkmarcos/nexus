@@ -616,9 +616,9 @@ app.put("/vendedores/:id", (req, res) => {
 
     db.prepare(`
       UPDATE vendedores 
-      SET nome = ?, email = ?, senha = ?, whatsapp = ?, limite_diario = ?, ativo = ?, fila_timestamp = ?, cpf = ?, link_kiwify = ?, eh_gerente = ?, indicado_por_id = ?, pix = ?
+      SET nome = ?, email = ?, senha = ?, whatsapp = ?, limite_diario = ?, ativo = ?, fila_timestamp = ?, cpf = ?, link_kiwify = ?, eh_gerente = ?, indicado_por_id = ?, pix = ?, ultimo_acesso = ?
       WHERE id = ?
-    `).run(nomeFinal, emailFinal, senhaFinal, whatsappFinal, limiteFinal, ativoFinal, filaTimestampFinal, cpfFinal, linkKiwifyFinal, ehGerenteFinal, indicadoPorIdFinal, pixFinal, id);
+    `).run(nomeFinal, emailFinal, senhaFinal, whatsappFinal, limiteFinal, ativoFinal, filaTimestampFinal, cpfFinal, linkKiwifyFinal, ehGerenteFinal, indicadoPorIdFinal, pixFinal, now, id);
     
     // Process queue after change
     processarFilaVendedores();
@@ -638,6 +638,10 @@ app.get("/vendedores/:id/dashboard-stats", (req, res) => {
       return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
     }
 
+    // Update seller access timestamp
+    const now = nowIso();
+    db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, id);
+
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayStartIso = todayStart.toISOString();
@@ -655,8 +659,6 @@ app.get("/vendedores/:id/dashboard-stats", (req, res) => {
     let limite = 25;
     if (vendedor.suspensao_ate && new Date(vendedor.suspensao_ate) > new Date()) {
       limite = 0;
-    } else if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
-      limite = 10;
     } else {
       limite = vendedor.limite_diario;
     }
@@ -1686,8 +1688,6 @@ app.post("/distribuir-leads", (req, res) => {
         let limite = 25;
         if (vendedor.suspensao_ate && new Date(vendedor.suspensao_ate) > new Date()) {
           limite = 0;
-        } else if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
-          limite = 10;
         } else {
           limite = vendedor.limite_diario;
         }
@@ -1732,7 +1732,7 @@ app.post("/distribuir-leads", (req, res) => {
 // MENSAGENS (TEMPLATES)
 app.post("/mensagens", (req, res) => {
   try {
-    const { nome, texto, ativa = 1, condicao_site = 'qualquer' } = req.body;
+    const { nome, texto, ativa = 1, condicao_site = 'qualquer', tipo = 'primaria' } = req.body;
     if (!nome || !texto) {
       return res.status(400).json({ ok: false, error: "Nome e Texto são obrigatórios." });
     }
@@ -1741,13 +1741,13 @@ app.post("/mensagens", (req, res) => {
     const now = nowIso();
 
     db.prepare(`
-      INSERT INTO mensagens (id, nome, texto, ativa, condicao_site, criado_em)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, nome, texto, ativa, condicao_site, now);
+      INSERT INTO mensagens (id, nome, texto, ativa, condicao_site, tipo, criado_em)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, nome, texto, ativa, condicao_site, tipo, now);
 
     res.json({
       ok: true,
-      mensagem: { id, nome, texto, ativa, condicao_site, criado_em: now }
+      mensagem: { id, nome, texto, ativa, condicao_site, tipo, criado_em: now }
     });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
@@ -1756,7 +1756,13 @@ app.post("/mensagens", (req, res) => {
 
 app.get("/mensagens", (req, res) => {
   try {
-    const mensagens = db.prepare("SELECT * FROM mensagens ORDER BY criado_em DESC").all();
+    const { tipo } = req.query;
+    let mensagens;
+    if (tipo) {
+      mensagens = db.prepare("SELECT * FROM mensagens WHERE tipo = ? ORDER BY criado_em DESC").all(tipo);
+    } else {
+      mensagens = db.prepare("SELECT * FROM mensagens ORDER BY criado_em DESC").all();
+    }
     res.json({ ok: true, mensagens });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
@@ -1788,7 +1794,7 @@ app.put("/mensagens/:id/ativar", (req, res) => {
 app.put("/mensagens/:id", (req, res) => {
   try {
     const { id } = req.params;
-    const { nome, texto, ativa, condicao_site } = req.body;
+    const { nome, texto, ativa, condicao_site, tipo } = req.body;
 
     const msgExistente = db.prepare("SELECT * FROM mensagens WHERE id = ?").get(id);
     if (!msgExistente) {
@@ -1799,12 +1805,13 @@ app.put("/mensagens/:id", (req, res) => {
     const textoFinal = texto !== undefined ? texto : msgExistente.texto;
     const ativaFinal = ativa !== undefined ? Number(ativa) : msgExistente.ativa;
     const condicaoSiteFinal = condicao_site !== undefined ? condicao_site : msgExistente.condicao_site;
+    const tipoFinal = tipo !== undefined ? tipo : msgExistente.tipo;
 
     db.prepare(`
       UPDATE mensagens 
-      SET nome = ?, texto = ?, ativa = ?, condicao_site = ?
+      SET nome = ?, texto = ?, ativa = ?, condicao_site = ?, tipo = ?
       WHERE id = ?
-    `).run(nomeFinal, textoFinal, ativaFinal, condicaoSiteFinal, id);
+    `).run(nomeFinal, textoFinal, ativaFinal, condicaoSiteFinal, tipoFinal, id);
 
     res.json({ ok: true, message: "Modelo de mensagem updated successfully." });
   } catch (error) {
@@ -2071,21 +2078,16 @@ app.post("/vendedores/:id/coletar-leads", (req, res) => {
     let limite = 25;
     if (vendedor.suspensao_ate && new Date(vendedor.suspensao_ate) > new Date()) {
       return res.status(400).json({ ok: false, error: "Sua conta está suspensa temporariamente para aquecimento do chip novo por 14 dias." });
-    } else if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
-      limite = 10;
     } else {
       limite = vendedor.limite_diario;
     }
 
     const capacidade = Math.max(0, limite - count);
     if (capacidade <= 0) {
-      if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
-        return res.status(400).json({ ok: false, error: "Você já atingiu seu limite diário da Fase de Teste (10 leads). Escolha a opção de chip no seu painel para liberar o limite de 25 leads diários." });
-      }
       return res.status(400).json({ ok: false, error: `Você já atingiu seu limite diário de ${vendedor.limite_diario} leads para hoje.` });
     }
 
-    const batchSize = (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") ? 10 : 25;
+    const batchSize = 25;
 
     // Fetch exactly batchSize leads
     const leads = db.prepare(`
@@ -2518,7 +2520,7 @@ async function dispararUmLeadParaVendedor(vendedorId) {
   lead.status = 'reservado';
   
   try {
-    const msgsAtivas = db.prepare("SELECT * FROM mensagens WHERE ativa = 1").all();
+    const msgsAtivas = db.prepare("SELECT * FROM mensagens WHERE ativa = 1 AND tipo = 'primaria'").all();
     if (msgsAtivas.length === 0) {
       console.log("[Agendador] Nenhuma mensagem ativa cadastrada. Cancelando disparo.");
       return false;
@@ -2627,9 +2629,6 @@ function iniciarAgendadorRobo() {
         `).get(v.id, hojeInicioIso).total;
         
         let limiteDiario = v.limite_diario;
-        if (!v.opcoes_chip || v.opcoes_chip === "pendente") {
-          limiteDiario = 10;
-        }
         
         const capacidade = limiteDiario - countHoje;
         if (capacidade > 0) {
