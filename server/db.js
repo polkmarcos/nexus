@@ -197,6 +197,14 @@ try {
 } catch (_) {}
 
 try {
+  db.exec("ALTER TABLE vendedores ADD COLUMN robo_ativo INTEGER DEFAULT 0;");
+} catch (_) {}
+
+try {
+  db.exec("ALTER TABLE vendedores ADD COLUMN ultimo_disparo_robo TEXT;");
+} catch (_) {}
+
+try {
   db.exec("ALTER TABLE leads ADD COLUMN assigned_to TEXT;");
 } catch (_) {}
 
@@ -288,6 +296,14 @@ try {
   db.prepare(`
     INSERT OR IGNORE INTO configuracoes (chave, valor)
     VALUES ('link_venda_padrao', '')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('hora_inicio_disparo', '8')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('hora_fim_disparo', '20')
   `).run();
 } catch (e) {
   console.error("Erro ao inserir configs padrão:", e.message);

@@ -1118,7 +1118,9 @@ app.put("/configuracoes", (req, res) => {
       smtp_user,
       smtp_pass,
       smtp_from,
-      link_venda_padrao
+      link_venda_padrao,
+      hora_inicio_disparo,
+      hora_fim_disparo
     } = req.body;
     
     db.transaction(() => {
@@ -1205,6 +1207,16 @@ app.put("/configuracoes", (req, res) => {
       if (link_venda_padrao !== undefined) {
         db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('link_venda_padrao', ?)")
           .run(String(link_venda_padrao).trim());
+      }
+
+      if (hora_inicio_disparo !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('hora_inicio_disparo', ?)")
+          .run(String(Number(hora_inicio_disparo) || 8));
+      }
+
+      if (hora_fim_disparo !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('hora_fim_disparo', ?)")
+          .run(String(Number(hora_fim_disparo) || 20));
       }
     })();
     
@@ -1841,6 +1853,11 @@ app.get("/whatsapp/status/:vendedorId", async (req, res) => {
     db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, vendedorId);
     
     const status = await checkSessionStatus(vendedorId);
+    
+    // Sobrescreve isSending com base no status robo_ativo do banco
+    const vendedor = db.prepare("SELECT robo_ativo FROM vendedores WHERE id = ?").get(vendedorId);
+    status.isSending = vendedor ? (vendedor.robo_ativo === 1) : false;
+    
     res.json({ ok: true, ...status });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
@@ -1930,243 +1947,18 @@ app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Sua conta está inativa na fila de espera. Conecte seu WhatsApp para ser ativado." });
     }
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayStartIso = todayStart.toISOString();
-
-    // Check how many leads were already assigned to him today
-    const countHoje = db.prepare(`
-      SELECT COUNT(*) as total FROM leads 
-      WHERE vendedor_id = ? AND (
-        status = 'reservado' 
-        OR (status != 'disponivel' AND status != 'Vácuo' AND atualizado_em >= ?)
-      )
-    `).get(vendedorId, todayStartIso).total;
-
-    let limiteDiario = 25;
     if (vendedor.suspensao_ate && new Date(vendedor.suspensao_ate) > new Date()) {
       return res.status(400).json({ ok: false, error: "Sua conta está suspensa temporariamente para aquecimento do chip novo por 14 dias." });
-    } else if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
-      limiteDiario = 10;
-    } else {
-      limiteDiario = vendedor.limite_diario;
     }
 
-    const capacidade = Math.max(0, limiteDiario - countHoje);
-    if (capacidade <= 0) {
-      if (!vendedor.opcoes_chip || vendedor.opcoes_chip === "pendente") {
-        return res.status(400).json({ ok: false, error: "Você já atingiu seu limite diário da Fase de Teste (10 leads). Escolha a opção de chip no seu painel para liberar o limite de 25 leads diários." });
-      }
-      return res.status(400).json({ ok: false, error: `Você já atingiu seu limite diário de ${vendedor.limite_diario} leads para hoje.` });
-    }
+    // Ativar o robô de disparo persistente no banco de dados
+    db.prepare("UPDATE vendedores SET robo_ativo = 1 WHERE id = ?").run(vendedorId);
+    console.log(`[Agendador] Robô ativado para o vendedor: ${vendedor.nome}`);
 
-    // Buscar configurações de disparo definidas pelo admin
-    const nichoDisparoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'nicho_disparo'").get();
-    const limiteDisparoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'limite_disparo'").get();
-
-    const nichoDisparo = nichoDisparoRow?.valor || "Geral";
-    const limiteDisparo = parseInt(limiteDisparoRow?.valor || "20", 10);
-
-    const totalARodar = Math.min(capacidade, limiteDisparo);
-
-    // Marcar que está em disparo para evitar conflito com o monitor de sessão
-    session.abortSending = false;
-    session.isSending = true;
-    session.isProcessingQueue = true;
-
-    // Responder imediatamente ao frontend — o pipeline roda em background
     res.json({
       ok: true,
-      message: `Disparo iniciado: buscando leads disponíveis no banco (nicho: ${nichoDisparo}, limite desta sessão: ${totalARodar}). As mensagens serão enviadas sequencialmente.`
+      message: "Robô ativado com sucesso! As mensagens serão distribuídas ao longo do dia no horário permitido."
     });
-
-    // Iniciar loop de envio em background
-    (async () => {
-      let templateIndex = 0;
-      let totalEnviados = 0;
-
-      console.log(`[Disparo] Iniciando processamento em background para ${vendedor.nome}. Capacidade restante: ${capacidade}. Limite da sessão: ${totalARodar}.`);
-
-      for (let i = 0; i < totalARodar; i++) {
-        if (session.abortSending) {
-          console.log(`[Disparo] Cancelamento solicitado pelo vendedor.`);
-          break;
-        }
-        if (session.status !== "connected") {
-          console.log(`[Disparo] Sessão WhatsApp desconectada. Cancelando envio restante.`);
-          break;
-        }
-
-        // Buscar um lead disponível no banco de dados
-        let lead;
-        try {
-          if (nichoDisparo && nichoDisparo !== "Geral") {
-            lead = db.prepare(`
-              SELECT * FROM leads 
-              WHERE status = 'disponivel' AND vendedor_id IS NULL AND nicho = ?
-              ORDER BY criado_em ASC LIMIT 1
-            `).get(nichoDisparo);
-          } else {
-            lead = db.prepare(`
-              SELECT * FROM leads 
-              WHERE status = 'disponivel' AND vendedor_id IS NULL
-              ORDER BY criado_em ASC LIMIT 1
-            `).get();
-          }
-        } catch (dbErr) {
-          console.error(`[Disparo] Erro ao buscar lead disponível:`, dbErr.message);
-          break;
-        }
-
-        if (!lead) {
-          console.log(`[Disparo] Nenhum lead disponível restando no banco de dados para o nicho "${nichoDisparo}".`);
-          break;
-        }
-
-        // Reservar o lead para este vendedor imediatamente
-        const nowIsoStr = new Date().toISOString();
-        try {
-          db.prepare(`
-            UPDATE leads 
-            SET vendedor_id = ?, status = 'reservado', assigned_to = ?, assigned_at = ?, atualizado_em = ?
-            WHERE id = ?
-          `).run(vendedorId, vendedorId, nowIsoStr, nowIsoStr, nowIsoStr, lead.id);
-          
-          // Atualizar o objeto lead local para os próximos passos
-          lead.vendedor_id = vendedorId;
-          lead.status = 'reservado';
-        } catch (reserveErr) {
-          console.error(`[Disparo] Erro ao reservar lead ${lead.empresa}:`, reserveErr.message);
-          continue; // tentar o próximo
-        }
-
-        try {
-          // Filtrar mensagens ativas que combinam com a condição do site do lead
-          const temSite = !!(lead.site && lead.site.trim() !== "" && lead.site !== "Não Informado" && lead.site !== "Não Informada");
-          
-          const msgsFiltradas = msgsAtivas.filter(m => {
-            const cond = m.condicao_site || 'qualquer';
-            if (cond === 'com_site') return temSite;
-            if (cond === 'sem_site') return !temSite;
-            return true; // qualquer
-          });
-
-          const msgsParaUsar = msgsFiltradas.length > 0 ? msgsFiltradas : msgsAtivas;
-
-          // Usar templates em rotação dentro da lista filtrada
-          const textoTemplate = msgsParaUsar[templateIndex % msgsParaUsar.length].texto;
-          templateIndex++;
-
-          console.log(`[Disparo] (${i + 1}/${totalARodar}) Enviando para: ${lead.empresa} (${lead.telefone}) [Site: ${lead.site || 'Nenhum'}]`);
-          await dispararMensagemParaLead(vendedorId, lead, textoTemplate);
-          totalEnviados++;
-        } catch (err) {
-          console.error(`[Disparo] Erro ao disparar para ${lead.empresa}:`, err.message);
-        }
-
-        // Intervalo aleatório entre envios (5 a 15 segundos)
-        const delay = Math.floor(Math.random() * 10000) + 5000;
-        await new Promise(r => setTimeout(r, delay));
-      }
-
-      // Se não atingimos o limite rodando do banco, coletar em tempo real
-      if (totalEnviados < totalARodar && !session.abortSending && session.status === "connected") {
-        console.log(`[Disparo] Faltam ${totalARodar - totalEnviados} leads para atingir o limite. Iniciando coleta em tempo real via Google Maps.`);
-        try {
-          const queryDisparoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'query_disparo'").get();
-          const queryDisparo = queryDisparoRow?.valor || "";
-          const queryBase = queryDisparo.trim() || nichoDisparo || "Empresas";
-          
-          // Carregar a lista de cidades do arquivo nacional (municipios.json)
-          let cidadesLista = CIDADES_VARREDURA;
-          try {
-            const fileContent = fs.readFileSync(path.join(__dirname, "municipios.json"), "utf-8");
-            const parsed = JSON.parse(fileContent);
-            cidadesLista = parsed.map(c => `${c.nome} - ${c.uf}`);
-            console.log(`[Disparo - Scraper] Carregadas ${cidadesLista.length} cidades de municipios.json.`);
-          } catch (err) {
-            console.error("[Disparo - Scraper] Falha ao ler municipios.json, usando fallback do index.js:", err.message);
-          }
-
-          // Achar a primeira cidade que não foi capturada para este nicho
-          let cidadeEscolhida = null;
-          for (const cidade of cidadesLista) {
-            const alreadyScraped = db.prepare("SELECT 1 FROM historico_capturas_cidades WHERE cidade = ? AND nicho = ?").get(cidade, nichoDisparo);
-            if (!alreadyScraped) {
-              cidadeEscolhida = cidade;
-              break;
-            }
-          }
-
-          // Se todas as cidades já foram capturadas, seleciona uma aleatória
-          if (!cidadeEscolhida) {
-            cidadeEscolhida = cidadesLista[Math.floor(Math.random() * cidadesLista.length)];
-            console.log(`[Disparo - Scraper] Todas as cidades já foram capturadas para o nicho "${nichoDisparo}". Selecionando cidade aleatória como fallback: ${cidadeEscolhida}`);
-          }
-
-          const query = `${queryBase} em ${cidadeEscolhida}`;
-          console.log(`[Disparo - Scraper] Cidade selecionada para busca: "${cidadeEscolhida}". Query de busca Google Maps: "${query}".`);
-
-          const limitRestante = totalARodar - totalEnviados;
-          
-          const checkCancelled = () => {
-            return session.abortSending || session.status !== "connected";
-          };
-          
-          const onLeadSaved = async (newLead) => {
-            try {
-              // Filtrar mensagens ativas que combinam com a condição do site do lead
-              const temSite = !!(newLead.site && newLead.site.trim() !== "" && newLead.site !== "Não Informado" && newLead.site !== "Não Informada");
-              
-              const msgsFiltradas = msgsAtivas.filter(m => {
-                const cond = m.condicao_site || 'qualquer';
-                if (cond === 'com_site') return temSite;
-                if (cond === 'sem_site') return !temSite;
-                return true; // qualquer
-              });
-
-              const msgsParaUsar = msgsFiltradas.length > 0 ? msgsFiltradas : msgsAtivas;
-
-              // Usar templates em rotação dentro da lista filtrada
-              const textoTemplate = msgsParaUsar[templateIndex % msgsParaUsar.length].texto;
-              templateIndex++;
-
-              console.log(`[Disparo - Raspado] (${totalEnviados + 1}/${totalARodar}) Enviando para: ${newLead.empresa} (${newLead.telefone}) [Site: ${newLead.site || 'Nenhum'}]`);
-              await dispararMensagemParaLead(vendedorId, newLead, textoTemplate);
-              totalEnviados++;
-            } catch (err) {
-              console.error(`[Disparo - Raspado] Erro ao disparar para ${newLead.empresa}:`, err.message);
-            }
-            
-            // Intervalo aleatório entre envios (5 a 15 segundos)
-            const delay = Math.floor(Math.random() * 10000) + 5000;
-            await new Promise(r => setTimeout(r, delay));
-          };
-
-          await scrapeGoogleMapsParaDisparo(query, nichoDisparo, limitRestante, vendedorId, checkCancelled, onLeadSaved);
-
-          // Registrar no histórico de capturas de cidades para este nicho
-          try {
-            db.prepare("INSERT OR REPLACE INTO historico_capturas_cidades (cidade, nicho, capturado_em) VALUES (?, ?, ?)").run(cidadeEscolhida, nichoDisparo, new Date().toISOString());
-            console.log(`[Disparo - Scraper] Cidade "${cidadeEscolhida}" registrada no histórico de capturas para o nicho "${nichoDisparo}".`);
-          } catch (saveHistoryErr) {
-            console.error("[Disparo - Scraper] Erro ao registrar cidade no histórico:", saveHistoryErr.message);
-          }
-
-        } catch (scrapeErr) {
-          console.error(`[Disparo] Erro durante a raspagem em tempo real:`, scrapeErr.message);
-        }
-      }
-
-      console.log(`[Disparo] Processamento concluído. Total enviados: ${totalEnviados}`);
-      session.isSending = false;
-      session.isProcessingQueue = false;
-    })().catch(err => {
-      console.error(`[Disparo] Erro geral no loop em background:`, err.message);
-      session.isSending = false;
-      session.isProcessingQueue = false;
-    });
-
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
@@ -2333,12 +2125,9 @@ app.post("/vendedores/:id/coletar-leads", (req, res) => {
 app.post("/whatsapp/cancelar-disparo/:vendedorId", (req, res) => {
   try {
     const { vendedorId } = req.params;
-    const session = sessions.get(vendedorId);
-    if (session) {
-      session.abortSending = true;
-      console.log(`[HTTP] Solicitação de cancelamento de disparo recebida para o vendedor: ${vendedorId}`);
-    }
-    res.json({ ok: true, message: "Solicitação de cancelamento enviada com sucesso." });
+    db.prepare("UPDATE vendedores SET robo_ativo = 0 WHERE id = ?").run(vendedorId);
+    console.log(`[HTTP] Robô desativado para o vendedor: ${vendedorId}`);
+    res.json({ ok: true, message: "Robô desativado com sucesso." });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
@@ -2632,6 +2421,294 @@ app.post("/admin/sandbox/testar-captura", async (req, res) => {
     res.status(500).json({ ok: false, error: error.message });
   }
 });
+
+// --- BACKGROUND ROBOT SCHEDULER & AUTO-CONNECTION ---
+
+async function garantirLeadsDisponiveis(nicho) {
+  let count;
+  if (nicho && nicho !== "Geral") {
+    count = db.prepare("SELECT COUNT(*) as count FROM leads WHERE status = 'disponivel' AND vendedor_id IS NULL AND nicho = ?").get(nicho).count;
+  } else {
+    count = db.prepare("SELECT COUNT(*) as count FROM leads WHERE status = 'disponivel' AND vendedor_id IS NULL").get().count;
+  }
+  
+  if (count > 0) {
+    return; // Já existem leads disponíveis no banco
+  }
+  
+  console.log(`[Agendador] Sem leads disponíveis para o nicho "${nicho}". Iniciando raspagem automática para repovoar o banco...`);
+  
+  const queryDisparoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'query_disparo'").get();
+  const queryDisparo = queryDisparoRow?.valor || "";
+  const queryBase = queryDisparo.trim() || nicho || "Empresas";
+  
+  let cidadesLista = CIDADES_VARREDURA;
+  try {
+    const fileContent = fs.readFileSync(path.join(__dirname, "municipios.json"), "utf-8");
+    const parsed = JSON.parse(fileContent);
+    cidadesLista = parsed.map(c => `${c.nome} - ${c.uf}`);
+  } catch (err) {
+    console.error("[Agendador - Scraper] Falha ao ler municipios.json, usando fallback:", err.message);
+  }
+  
+  let cidadeEscolhida = null;
+  for (const cidade of cidadesLista) {
+    const alreadyScraped = db.prepare("SELECT 1 FROM historico_capturas_cidades WHERE cidade = ? AND nicho = ?").get(cidade, nicho);
+    if (!alreadyScraped) {
+      cidadeEscolhida = cidade;
+      break;
+    }
+  }
+  
+  if (!cidadeEscolhida) {
+    cidadeEscolhida = cidadesLista[Math.floor(Math.random() * cidadesLista.length)];
+  }
+  
+  const query = `${queryBase} em ${cidadeEscolhida}`;
+  console.log(`[Agendador - Scraper] Cidade selecionada para busca automática: "${cidadeEscolhida}". Query: "${query}".`);
+  
+  try {
+    // Raspa 15 leads de uma vez para repopular o banco
+    await scrapeGoogleMaps(query, nicho, 15);
+    
+    // Registrar no histórico de cidades
+    db.prepare("INSERT OR REPLACE INTO historico_capturas_cidades (cidade, nicho, capturado_em) VALUES (?, ?, ?)").run(cidadeEscolhida, nicho, new Date().toISOString());
+  } catch (err) {
+    console.error("[Agendador - Scraper] Erro ao raspar leads de forma automática:", err.message);
+  }
+}
+
+async function dispararUmLeadParaVendedor(vendedorId) {
+  const nichoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'nicho_disparo'").get();
+  const nicho = nichoRow?.valor || "Geral";
+  
+  // Garantir que temos leads disponíveis (chama o scraper se necessário)
+  await garantirLeadsDisponiveis(nicho);
+  
+  // Buscar um lead disponível
+  let lead;
+  if (nicho && nicho !== "Geral") {
+    lead = db.prepare(`
+      SELECT * FROM leads 
+      WHERE status = 'disponivel' AND vendedor_id IS NULL AND nicho = ?
+      ORDER BY criado_em ASC LIMIT 1
+    `).get(nicho);
+  } else {
+    lead = db.prepare(`
+      SELECT * FROM leads 
+      WHERE status = 'disponivel' AND vendedor_id IS NULL
+      ORDER BY criado_em ASC LIMIT 1
+    `).get();
+  }
+  
+  if (!lead) {
+    console.log(`[Agendador] Nenhum lead disponível restou no banco de dados para disparo.`);
+    return false;
+  }
+  
+  // Reservar o lead para o vendedor imediatamente
+  const nowIsoStr = new Date().toISOString();
+  db.prepare(`
+    UPDATE leads 
+    SET vendedor_id = ?, status = 'reservado', assigned_to = ?, assigned_at = ?, atualizado_em = ?
+    WHERE id = ?
+  `).run(vendedorId, vendedorId, nowIsoStr, nowIsoStr, nowIsoStr, lead.id);
+  
+  lead.vendedor_id = vendedorId;
+  lead.status = 'reservado';
+  
+  try {
+    const msgsAtivas = db.prepare("SELECT * FROM mensagens WHERE ativa = 1").all();
+    if (msgsAtivas.length === 0) {
+      console.log("[Agendador] Nenhuma mensagem ativa cadastrada. Cancelando disparo.");
+      return false;
+    }
+    
+    // Filtrar por site
+    const temSite = !!(lead.site && lead.site.trim() !== "" && lead.site !== "Não Informado" && lead.site !== "Não Informada");
+    const msgsFiltradas = msgsAtivas.filter(m => {
+      const cond = m.condicao_site || 'qualquer';
+      if (cond === 'com_site') return temSite;
+      if (cond === 'sem_site') return !temSite;
+      return true;
+    });
+    
+    const msgsParaUsar = msgsFiltradas.length > 0 ? msgsFiltradas : msgsAtivas;
+    
+    // Selecionar mensagem aleatória
+    const msgEscolhida = msgsParaUsar[Math.floor(Math.random() * msgsParaUsar.length)];
+    const textoTemplate = msgEscolhida.texto;
+    
+    console.log(`[Agendador] Enviando para: ${lead.empresa} (${lead.telefone}) [Vendedor: ${vendedorId}]`);
+    await dispararMensagemParaLead(vendedorId, lead, textoTemplate);
+    return true;
+  } catch (err) {
+    console.error(`[Agendador] Erro no disparo de lead ${lead.empresa}:`, err.message);
+    return false;
+  }
+}
+
+let proximoEnvioTimestamp = 0;
+
+function iniciarAgendadorRobo() {
+  setInterval(async () => {
+    try {
+      const agora = new Date();
+      
+      // 1. Obter horas configuradas pelo admin
+      const horaInicioRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'hora_inicio_disparo'").get();
+      const horaFimRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'hora_fim_disparo'").get();
+      
+      const horaInicio = parseInt(horaInicioRow?.valor || "8", 10);
+      const horaFim = parseInt(horaFimRow?.valor || "20", 10);
+      
+      const horaAtual = agora.getHours();
+      
+      // Verificar janela de horário permitida
+      const dentroDoHorario = horaAtual >= horaInicio && horaAtual < horaFim;
+      
+      if (!dentroDoHorario) {
+        // Se estiver fora do horário, programar o próximo ciclo
+        const proximoInicio = new Date(agora);
+        if (horaAtual >= horaFim) {
+          proximoInicio.setDate(agora.getDate() + 1);
+        }
+        proximoInicio.setHours(horaInicio, 0, 0, 0);
+        
+        // Delay aleatório de 1 a 5 minutos após o início do horário para evitar disparo em massa às 8:00 em ponto
+        const delayInicialAleatorio = (Math.floor(Math.random() * 4) + 1) * 60 * 1000;
+        const targetTime = proximoInicio.getTime() + delayInicialAleatorio;
+        
+        if (proximoEnvioTimestamp < targetTime) {
+          console.log(`[Agendador] Fora do horário de disparo (${horaInicio}h às ${horaFim}h). Próximo ciclo agendado para: ${new Date(targetTime).toLocaleString("pt-BR")}`);
+          proximoEnvioTimestamp = targetTime;
+        }
+        return;
+      }
+      
+      // Se estamos dentro do horário, verificar se o momento do envio já chegou
+      if (Date.now() < proximoEnvioTimestamp) {
+        return;
+      }
+      
+      // 2. Buscar vendedores com o robô ligado
+      const vendedoresAtivos = db.prepare("SELECT * FROM vendedores WHERE robo_ativo = 1 AND ativo = 1").all();
+      if (vendedoresAtivos.length === 0) {
+        // Nenhum robô ativo, verificar novamente em 30 segundos
+        proximoEnvioTimestamp = Date.now() + 30 * 1000;
+        return;
+      }
+      
+      // 3. Filtrar vendedores elegíveis
+      const hojeInicio = new Date();
+      hojeInicio.setHours(0, 0, 0, 0);
+      const hojeInicioIso = hojeInicio.toISOString();
+      
+      const elegiveis = [];
+      for (const v of vendedoresAtivos) {
+        // Checar conexão WhatsApp
+        const status = await checkSessionStatus(v.id);
+        if (status.status !== "connected") {
+          continue;
+        }
+        
+        // Se estiver suspenso pular
+        if (v.suspensao_ate && new Date(v.suspensao_ate) > new Date()) {
+          continue;
+        }
+        
+        // Checar limite diário
+        const countHoje = db.prepare(`
+          SELECT COUNT(*) as total FROM leads 
+          WHERE vendedor_id = ? AND (
+            status = 'reservado' 
+            OR (status != 'disponivel' AND status != 'Vácuo' AND atualizado_em >= ?)
+          )
+        `).get(v.id, hojeInicioIso).total;
+        
+        let limiteDiario = v.limite_diario;
+        if (!v.opcoes_chip || v.opcoes_chip === "pendente") {
+          limiteDiario = 10;
+        }
+        
+        const capacidade = limiteDiario - countHoje;
+        if (capacidade > 0) {
+          elegiveis.push({
+            vendedor: v,
+            capacidade,
+            ultimoDisparo: v.ultimo_disparo_robo ? new Date(v.ultimo_disparo_robo).getTime() : 0
+          });
+        }
+      }
+      
+      if (elegiveis.length === 0) {
+        // Ninguém elegível restando hoje, verificar novamente em 1 minuto
+        proximoEnvioTimestamp = Date.now() + 60 * 1000;
+        return;
+      }
+      
+      // 4. Selecionar o vendedor prioritário (quem está há mais tempo sem enviar)
+      elegiveis.sort((a, b) => a.ultimoDisparo - b.ultimoDisparo);
+      const selecionado = elegiveis[0];
+      const { vendedor, capacidade } = selecionado;
+      
+      console.log(`[Agendador] Vendedor selecionado para enviar agora: ${vendedor.nome} (capacidade hoje restante: ${capacidade}).`);
+      
+      const enviadoSucesso = await dispararUmLeadParaVendedor(vendedor.id);
+      
+      // Registrar timestamp do último disparo
+      const agoraIso = new Date().toISOString();
+      db.prepare("UPDATE vendedores SET ultimo_disparo_robo = ? WHERE id = ?").run(agoraIso, vendedor.id);
+      
+      // 5. Calcular o delay para o próximo envio
+      const totalLeadsRestantes = elegiveis.reduce((sum, item) => sum + item.capacidade, 0);
+      
+      const limiteHoje = new Date(agora);
+      limiteHoje.setHours(horaFim, 0, 0, 0);
+      
+      let minutosRestantes = Math.max(1, (limiteHoje.getTime() - agora.getTime()) / (60 * 1000));
+      
+      // Intervalo médio
+      let intervaloMedio = minutosRestantes / totalLeadsRestantes;
+      
+      // Randomizar (+/- 30%)
+      let intervaloRandom = intervaloMedio * (0.7 + Math.random() * 0.6);
+      
+      // Clampar entre 1 minuto (mínimo de segurança anti-spam) e 15 minutos (máximo de espera)
+      const intervaloFinalMinutos = Math.max(1, Math.min(15, intervaloRandom));
+      
+      proximoEnvioTimestamp = Date.now() + intervaloFinalMinutos * 60 * 1000;
+      console.log(`[Agendador] Envio processado. Próximo disparo em ${intervaloFinalMinutos.toFixed(2)} minutos (${new Date(proximoEnvioTimestamp).toLocaleTimeString("pt-BR")}). Restam ${totalLeadsRestantes - (enviadoSucesso ? 1 : 0)} leads hoje.`);
+      
+    } catch (err) {
+      console.error("[Agendador] Erro geral na execução do agendador:", err.message);
+      proximoEnvioTimestamp = Date.now() + 30 * 1000;
+    }
+  }, 10000);
+}
+
+// Auto-conectar vendedores ativos na inicialização do servidor
+(async () => {
+  try {
+    // Aguardar 5 segundos para o servidor inicializar
+    await new Promise(r => setTimeout(r, 5000));
+    console.log("[Inicialização] Verificando vendedores com robô ativo para auto-conectar WhatsApp...");
+    const ativos = db.prepare("SELECT * FROM vendedores WHERE robo_ativo = 1 AND ativo = 1").all();
+    for (const v of ativos) {
+      console.log(`[Inicialização] Restaurando conexão WhatsApp para o vendedor: ${v.nome}...`);
+      conectarWhatsapp(v.id, v.whatsapp).catch(err => {
+        console.error(`[Inicialização] Erro ao auto-conectar ${v.nome}:`, err.message);
+      });
+      // Pequeno delay entre tentativas de conexão para não sobrecarregar recursos
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    
+    // Iniciar o agendador de disparos
+    iniciarAgendadorRobo();
+  } catch (startupErr) {
+    console.error("[Inicialização] Erro ao restaurar conexões do robô:", startupErr.message);
+  }
+})();
 
 app.listen(PORT, () => {
   console.log(`Servidor rodando em http://localhost:${PORT}`);

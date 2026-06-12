@@ -509,6 +509,8 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
   const [smtpPass, setSmtpPass] = useState("");
   const [smtpFrom, setSmtpFrom] = useState("");
   const [linkVendaPadrao, setLinkVendaPadrao] = useState("");
+  const [horaInicioDisparo, setHoraInicioDisparo] = useState(8);
+  const [horaFimDisparo, setHoraFimDisparo] = useState(20);
   const [configErro, setConfigErro] = useState("");
   const [configSucesso, setConfigSucesso] = useState("");
   const [configAbaAtiva, setConfigAbaAtiva] = useState("geral");
@@ -597,6 +599,8 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
         if (data.smtp_pass !== undefined) setSmtpPass(data.smtp_pass);
         if (data.smtp_from !== undefined) setSmtpFrom(data.smtp_from);
         if (data.link_venda_padrao !== undefined) setLinkVendaPadrao(data.link_venda_padrao);
+        if (data.hora_inicio_disparo !== undefined) setHoraInicioDisparo(Number(data.hora_inicio_disparo));
+        if (data.hora_fim_disparo !== undefined) setHoraFimDisparo(Number(data.hora_fim_disparo));
       }
     } catch (e) {
       console.error("Erro ao carregar configurações", e);
@@ -625,7 +629,9 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
         smtp_user: smtpUser,
         smtp_pass: smtpPass,
         smtp_from: smtpFrom,
-        link_venda_padrao: linkVendaPadrao
+        link_venda_padrao: linkVendaPadrao,
+        hora_inicio_disparo: horaInicioDisparo,
+        hora_fim_disparo: horaFimDisparo
       };
       if (novaSenhaAdmin.trim() !== "") {
         payload.senha_administrador = novaSenhaAdmin;
@@ -985,6 +991,36 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
                 />
                 <small style={{ color: "var(--text-secondary)" }}>
                   Quantidade máxima de leads que serão raspados e disparados por sessão de envio.
+                </small>
+              </div>
+
+              <div className="form-group">
+                <label>⏰ Horário de Início dos Disparos (0-23h)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="23"
+                  value={horaInicioDisparo}
+                  onChange={e => setHoraInicioDisparo(Number(e.target.value))}
+                  required
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Hora do dia em que os envios do robô começam. Ex: 8 para 08:00.
+                </small>
+              </div>
+
+              <div className="form-group">
+                <label>⏰ Horário de Término dos Disparos (0-23h)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="23"
+                  value={horaFimDisparo}
+                  onChange={e => setHoraFimDisparo(Number(e.target.value))}
+                  required
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Hora do dia em que os envios são pausados. Ex: 20 para 20:00.
                 </small>
               </div>
             </div>
@@ -4806,7 +4842,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
               onClick={cancelarDisparo}
               style={{ display: "flex", alignItems: "center", gap: "6px", background: "#f44336", borderColor: "#f44336", height: "42px" }}
             >
-              ⏹️ Parar Envio
+              ⏹️ Parar Robô
             </button>
           ) : (
             <button className="btn btn-primary" onClick={dispararMensagensAutomaticas} disabled={whatsappStatus !== "connected"}>
@@ -4821,16 +4857,16 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
           <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
             📤 Registro de Envios Recentes
-            {isSending && <span className="badge badge-success pulse" style={{ padding: "4px 8px", fontSize: "0.75rem", borderRadius: "4px" }}>🟢 Envio em Progresso</span>}
+            {isSending && <span className="badge badge-success pulse" style={{ padding: "4px 8px", fontSize: "0.75rem", borderRadius: "4px" }}>🟢 Robô Ativo</span>}
           </h3>
           <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-            {isSending ? "Atualizando automaticamente..." : "Aguardando novos disparos"}
+            {isSending ? "Robô ativo e monitorando..." : "Robô pausado"}
           </span>
         </div>
         
         {leadsEnviados.length === 0 ? (
           <p style={{ color: "var(--text-tertiary)", fontSize: "0.9rem", margin: "10px 0 0 0" }}>
-            {isSending ? "🔍 O robô está buscando novos leads na internet... aguarde o primeiro envio." : "Nenhuma mensagem enviada nesta sessão ainda."}
+            {isSending ? "🤖 O robô está ativo em segundo plano no servidor 24h. Ele distribuirá os envios ao longo do dia para evitar padrões suspeitos." : "Nenhuma mensagem enviada hoje. Ative o robô acima para iniciar."}
           </p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>
