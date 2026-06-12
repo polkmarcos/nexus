@@ -416,8 +416,8 @@ export async function scrapeGoogleMaps(query, nicho, limit = 20, checkCancelled,
           atualizado_em: now
         };
         
-        db.prepare(`
-          INSERT INTO leads (
+        const result = db.prepare(`
+          INSERT OR IGNORE INTO leads (
             id, empresa, telefone, cidade, estado, nicho, status, vendedor_id, 
             origem, query_origem, endereco, site, ultima_mensagem, observacoes, criado_em, atualizado_em
           ) VALUES (
@@ -425,6 +425,11 @@ export async function scrapeGoogleMaps(query, nicho, limit = 20, checkCancelled,
             @origem, @query_origem, @endereco, @site, @ultima_mensagem, @observacoes, @criado_em, @atualizado_em
           )
         `).run(lead);
+        
+        if (result.changes === 0) {
+          console.log(`Lead "${empresa}" (${phoneClean}) foi inserido concorrentemente por outro processo. Ignorado.`);
+          continue;
+        }
         
         // Adicionar aos Sets para evitar duplicados nas próximas iterações
         existingPhones.add(phoneClean);
@@ -789,8 +794,8 @@ export async function scrapeGoogleMapsParaDisparo(query, nicho, limit = 20, vend
           atualizado_em: now
         };
 
-        db.prepare(`
-          INSERT INTO leads (
+        const result = db.prepare(`
+          INSERT OR IGNORE INTO leads (
             id, empresa, telefone, cidade, estado, nicho, status, vendedor_id,
             assigned_to, assigned_at,
             origem, query_origem, endereco, site, ultima_mensagem, observacoes, criado_em, atualizado_em
@@ -800,6 +805,11 @@ export async function scrapeGoogleMapsParaDisparo(query, nicho, limit = 20, vend
             @origem, @query_origem, @endereco, @site, @ultima_mensagem, @observacoes, @criado_em, @atualizado_em
           )
         `).run(lead);
+
+        if (result.changes === 0) {
+          console.log(`[Disparo] Lead "${empresa}" (${phoneClean}) foi inserido concorrentemente por outro processo. Ignorado.`);
+          continue;
+        }
 
         // Atualizar conjuntos de deduplicação
         existingPhones.add(phoneClean);

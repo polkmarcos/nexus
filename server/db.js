@@ -112,6 +112,45 @@ db.exec(`
 `);
 
 // Safe migrations for existing databases
+
+// Clean up duplicate leads (keeping the first one) before creating unique index
+try {
+  const duplicates = db.prepare(`
+    SELECT id FROM leads 
+    WHERE telefone IS NOT NULL AND telefone != '' AND id NOT IN (
+      SELECT MIN(id) 
+      FROM leads 
+      WHERE telefone IS NOT NULL AND telefone != ''
+      GROUP BY telefone
+    )
+  `).all();
+  
+  if (duplicates.length > 0) {
+    console.log(`[Database Migration] Encontrados ${duplicates.length} leads duplicados. Limpando...`);
+    const deleteChat = db.prepare("DELETE FROM mensagens_chat WHERE lead_id = ?");
+    const deletePreVendas = db.prepare("DELETE FROM pre_vendas WHERE lead_id = ?");
+    const deleteLead = db.prepare("DELETE FROM leads WHERE id = ?");
+    
+    db.transaction(() => {
+      for (const d of duplicates) {
+        deleteChat.run(d.id);
+        deletePreVendas.run(d.id);
+        deleteLead.run(d.id);
+      }
+    })();
+    console.log("[Database Migration] Limpeza de leads duplicados concluída!");
+  }
+} catch (e) {
+  console.error("Erro ao limpar leads duplicados:", e.message);
+}
+
+// Create unique index on leads(telefone)
+try {
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_telefone ON leads (telefone) WHERE telefone IS NOT NULL AND telefone != '';");
+} catch (e) {
+  console.error("Erro ao criar índice único:", e.message);
+}
+
 try {
   db.exec("ALTER TABLE vendedores ADD COLUMN ultimo_acesso TEXT;");
 } catch (_) {}

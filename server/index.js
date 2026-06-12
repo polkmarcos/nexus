@@ -1309,7 +1309,7 @@ app.post("/leads/importar", (req, res) => {
     `);
 
     const insertLead = db.prepare(`
-      INSERT INTO leads (
+      INSERT OR IGNORE INTO leads (
         id, empresa, telefone, cidade, estado, nicho, status, vendedor_id, 
         origem, query_origem, endereco, site, ultima_mensagem, observacoes, criado_em, atualizado_em
       ) VALUES (
@@ -1346,11 +1346,15 @@ app.post("/leads/importar", (req, res) => {
         }
 
         const id = randomUUID();
-        insertLead.run(
+        const result = insertLead.run(
           id, empresa, telefone, cidade, estado, nicho, 
           endereco, site, now, now
         );
-        importadosCount++;
+        if (result.changes > 0) {
+          importadosCount++;
+        } else {
+          duplicadosCount++;
+        }
       }
     })();
 
