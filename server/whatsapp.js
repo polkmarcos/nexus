@@ -876,7 +876,7 @@ export async function monitorarRespostaLead(vendedorId, lead, sentAt, msgsConfig
               linkKiwify = vendedor.link_kiwify;
             }
             if (!linkKiwify) {
-              const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_afiliacao_kiwify");
+              const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
               if (globalConfig) {
                 linkKiwify = globalConfig.valor;
               }

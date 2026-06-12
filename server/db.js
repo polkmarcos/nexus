@@ -285,6 +285,10 @@ try {
     INSERT OR IGNORE INTO configuracoes (chave, valor)
     VALUES ('smtp_from', '')
   `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('link_venda_padrao', '')
+  `).run();
 } catch (e) {
   console.error("Erro ao inserir configs padrão:", e.message);
 }

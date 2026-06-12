@@ -493,6 +493,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
   const [smtpUser, setSmtpUser] = useState("");
   const [smtpPass, setSmtpPass] = useState("");
   const [smtpFrom, setSmtpFrom] = useState("");
+  const [linkVendaPadrao, setLinkVendaPadrao] = useState("");
   const [configErro, setConfigErro] = useState("");
   const [configSucesso, setConfigSucesso] = useState("");
 
@@ -579,6 +580,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
         if (data.smtp_user !== undefined) setSmtpUser(data.smtp_user);
         if (data.smtp_pass !== undefined) setSmtpPass(data.smtp_pass);
         if (data.smtp_from !== undefined) setSmtpFrom(data.smtp_from);
+        if (data.link_venda_padrao !== undefined) setLinkVendaPadrao(data.link_venda_padrao);
       }
     } catch (e) {
       console.error("Erro ao carregar configurações", e);
@@ -606,7 +608,8 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
         smtp_port: smtpPort,
         smtp_user: smtpUser,
         smtp_pass: smtpPass,
-        smtp_from: smtpFrom
+        smtp_from: smtpFrom,
+        link_venda_padrao: linkVendaPadrao
       };
       if (novaSenhaAdmin.trim() !== "") {
         payload.senha_administrador = novaSenhaAdmin;
@@ -823,7 +826,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
             </div>
             
             <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>🔗 Link de Afiliação Geral / Fallback (Kiwify ou Site)</label>
+              <label>🔗 Link de Solicitação de Afiliação (Kiwify)</label>
               <input 
                 type="text" 
                 value={linkAfiliacaoKiwify} 
@@ -832,7 +835,21 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
                 placeholder="Ex: https://dashboard.kiwify.com.br/affiliate/join/..."
               />
               <small style={{ color: "var(--text-secondary)" }}>
-                Este link será enviado nas mensagens se o vendedor não cadastrar o seu link de afiliado próprio. Também será aberto no botão "Gerar Link" no cadastro de perfil.
+                Este link será aberto quando o vendedor clicar em "Gerar Link" no cadastro de perfil para se filiar ao seu produto.
+              </small>
+            </div>
+
+            <div className="form-group" style={{ gridColumn: "span 2" }}>
+              <label>🛍️ Link de Venda Geral / Fallback (Site do Produto / Checkout)</label>
+              <input 
+                type="text" 
+                value={linkVendaPadrao} 
+                onChange={e => setLinkVendaPadrao(e.target.value)} 
+                required 
+                placeholder="Ex: https://pay.kiwify.com.br/..."
+              />
+              <small style={{ color: "var(--text-secondary)" }}>
+                Este link será enviado nas mensagens de prospecção/auto-reply para os clientes finais caso o vendedor não tenha cadastrado seu link de afiliação de vendas próprio.
               </small>
             </div>
 

@@ -1116,7 +1116,8 @@ app.put("/configuracoes", (req, res) => {
       smtp_port,
       smtp_user,
       smtp_pass,
-      smtp_from
+      smtp_from,
+      link_venda_padrao
     } = req.body;
     
     db.transaction(() => {
@@ -1198,6 +1199,11 @@ app.put("/configuracoes", (req, res) => {
       if (smtp_from !== undefined) {
         db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('smtp_from', ?)")
           .run(String(smtp_from).trim());
+      }
+
+      if (link_venda_padrao !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('link_venda_padrao', ?)")
+          .run(String(link_venda_padrao).trim());
       }
     })();
     
@@ -2396,7 +2402,7 @@ app.get("/respostas-rapidas", (req, res) => {
     }
 
     if (!linkKiwify) {
-      const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_afiliacao_kiwify");
+      const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
       if (globalConfig) {
         linkKiwify = globalConfig.valor;
       }
