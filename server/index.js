@@ -2558,6 +2558,8 @@ app.post("/leads/:leadId/mensagens/enviar", async (req, res) => {
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
+});
+
 // ADMIN SANDBOX ENDPOINTS
 app.post("/admin/sandbox/enviar", async (req, res) => {
   try {
