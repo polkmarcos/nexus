@@ -109,6 +109,15 @@ db.exec(`
     capturado_em TEXT NOT NULL,
     PRIMARY KEY (cidade, nicho)
   );
+
+  CREATE TABLE IF NOT EXISTS recuperacao_senha (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    codigo TEXT NOT NULL,
+    token TEXT NOT NULL,
+    expira_em TEXT NOT NULL,
+    usado INTEGER DEFAULT 0
+  );
 `);
 
 // Safe migrations for existing databases
@@ -255,6 +264,26 @@ try {
   db.prepare(`
     INSERT OR IGNORE INTO configuracoes (chave, valor)
     VALUES ('whatsapp_suporte', '')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('smtp_host', '')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('smtp_port', '')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('smtp_user', '')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('smtp_pass', '')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('smtp_from', '')
   `).run();
 } catch (e) {
   console.error("Erro ao inserir configs padrão:", e.message);

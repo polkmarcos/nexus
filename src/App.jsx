@@ -55,6 +55,7 @@ export default function App() {
   const [adminMensagensAba, setAdminMensagensAba] = useState("prospeccao");
   const [mobileMenuAberto, setMobileMenuAberto] = useState(false);
   const [whatsappSuporte, setWhatsappSuporte] = useState("");
+  const [urlRecuperarToken, setUrlRecuperarToken] = useState("");
 
   useEffect(() => {
     async function obterConfigSuporte() {
@@ -70,6 +71,18 @@ export default function App() {
     }
     obterConfigSuporte();
   }, [usuarioLogado]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const resetToken = params.get("recuperar_token");
+    if (resetToken) {
+      setUrlRecuperarToken(resetToken);
+      setPagina("recuperar-senha");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("recuperar_token");
+      window.history.replaceState({}, document.title, url.pathname + url.search);
+    }
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -166,6 +179,13 @@ export default function App() {
             )}
             {pagina === "login" && (
               <Login loginSucesso={loginSucesso} setPagina={setPagina} />
+            )}
+            {pagina === "recuperar-senha" && (
+              <RecuperarSenha 
+                setPagina={setPagina} 
+                urlToken={urlRecuperarToken} 
+                setUrlToken={setUrlRecuperarToken} 
+              />
             )}
 
             {pagina === "vendedor-dashboard" && (
@@ -468,6 +488,11 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
   const [msgRobo, setMsgRobo] = useState("");
   const [msgHumano, setMsgHumano] = useState("");
   const [whatsappSuporte, setWhatsappSuporte] = useState("");
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState("");
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPass, setSmtpPass] = useState("");
+  const [smtpFrom, setSmtpFrom] = useState("");
   const [configErro, setConfigErro] = useState("");
   const [configSucesso, setConfigSucesso] = useState("");
 
@@ -549,6 +574,11 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
         if (data.mensagem_resposta_robo !== undefined) setMsgRobo(data.mensagem_resposta_robo);
         if (data.mensagem_resposta_humano !== undefined) setMsgHumano(data.mensagem_resposta_humano);
         if (data.whatsapp_suporte !== undefined) setWhatsappSuporte(data.whatsapp_suporte);
+        if (data.smtp_host !== undefined) setSmtpHost(data.smtp_host);
+        if (data.smtp_port !== undefined) setSmtpPort(data.smtp_port);
+        if (data.smtp_user !== undefined) setSmtpUser(data.smtp_user);
+        if (data.smtp_pass !== undefined) setSmtpPass(data.smtp_pass);
+        if (data.smtp_from !== undefined) setSmtpFrom(data.smtp_from);
       }
     } catch (e) {
       console.error("Erro ao carregar configurações", e);
@@ -571,7 +601,12 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
         limite_disparo: limiteDisparo,
         mensagem_resposta_robo: msgRobo,
         mensagem_resposta_humano: msgHumano,
-        whatsapp_suporte: whatsappSuporte
+        whatsapp_suporte: whatsappSuporte,
+        smtp_host: smtpHost,
+        smtp_port: smtpPort,
+        smtp_user: smtpUser,
+        smtp_pass: smtpPass,
+        smtp_from: smtpFrom
       };
       if (novaSenhaAdmin.trim() !== "") {
         payload.senha_administrador = novaSenhaAdmin;
@@ -868,6 +903,65 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
               <small style={{ color: "var(--text-secondary)" }}>
                 Número com código do país (55) e DDD que os funcionários usarão para tirar dúvidas.
               </small>
+            </div>
+
+            <div className="form-group" style={{ gridColumn: "span 2", marginTop: "20px", borderTop: "1px solid var(--border-color)", paddingTop: "20px" }}>
+              <strong style={{ fontSize: "1.1rem", color: "var(--primary)", display: "flex", alignItems: "center", gap: "6px" }}>
+                📧 Configurações de E-mail (SMTP para Recuperação de Senha)
+              </strong>
+              <p style={{ margin: "4px 0 12px 0", fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                Defina o servidor de SMTP para envio de e-mails de recuperação de senha aos vendedores. Deixe em branco para simular no console.
+              </p>
+            </div>
+
+            <div className="form-group">
+              <label>SMTP Host</label>
+              <input 
+                type="text" 
+                value={smtpHost} 
+                onChange={e => setSmtpHost(e.target.value)} 
+                placeholder="Ex: smtp.hostinger.com" 
+              />
+            </div>
+
+            <div className="form-group">
+              <label>SMTP Porta</label>
+              <input 
+                type="text" 
+                value={smtpPort} 
+                onChange={e => setSmtpPort(e.target.value)} 
+                placeholder="Ex: 465 ou 587" 
+              />
+            </div>
+
+            <div className="form-group">
+              <label>SMTP Usuário / E-mail</label>
+              <input 
+                type="text" 
+                value={smtpUser} 
+                onChange={e => setSmtpUser(e.target.value)} 
+                placeholder="Ex: suporte@seudominio.com" 
+              />
+            </div>
+
+            <div className="form-group">
+              <label>SMTP Senha</label>
+              <input 
+                type="password" 
+                value={smtpPass} 
+                onChange={e => setSmtpPass(e.target.value)} 
+                placeholder="Senha do e-mail ou token" 
+              />
+            </div>
+
+            <div className="form-group" style={{ gridColumn: "span 2" }}>
+              <label>SMTP Remetente (E-mail que envia)</label>
+              <input 
+                type="text" 
+                value={smtpFrom} 
+                onChange={e => setSmtpFrom(e.target.value)} 
+                placeholder="Ex: suporte@seudominio.com" 
+              />
             </div>
 
             <div style={{
@@ -4107,7 +4201,27 @@ function Login({ loginSucesso, setPagina }) {
         </div>
 
         <div className="form-group" style={{ marginBottom: "20px" }}>
-          <label>Senha de Acesso</label>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+            <label style={{ margin: 0 }}>Senha de Acesso</label>
+            <button 
+              type="button" 
+              onClick={() => setPagina("recuperar-senha")} 
+              style={{ 
+                background: "transparent", 
+                border: "none", 
+                color: "var(--primary)", 
+                fontSize: "0.85rem", 
+                cursor: "pointer",
+                padding: 0,
+                margin: 0,
+                width: "auto",
+                fontWeight: "600",
+                textDecoration: "underline"
+              }}
+            >
+              Esqueci minha senha
+            </button>
+          </div>
           <input name="senha" type="password" value={form.senha} onChange={alterarCampo} required placeholder="******" />
         </div>
 
@@ -5736,3 +5850,228 @@ function ChatDrawer({ lead, vendedorId, onClose, onMessageSent, readOnly = false
     </>
   );
 }
+
+// 22. PASSWORD RECOVERY COMPONENT
+function RecuperarSenha({ setPagina, urlToken, setUrlToken }) {
+  const [step, setStep] = useState(urlToken ? 2 : 1);
+  const [email, setEmail] = useState("");
+  const [codigo, setCodigo] = useState("");
+  const [token, setToken] = useState(urlToken || "");
+  const [novaSenha, setNovaSenha] = useState("");
+  const [confirmarSenha, setConfirmarSenha] = useState("");
+  const [erro, setErro] = useState("");
+  const [sucesso, setSucesso] = useState("");
+  const [carregando, setCarregando] = useState(false);
+  const [devInfo, setDevInfo] = useState("");
+
+  useEffect(() => {
+    if (urlToken) {
+      setStep(2);
+      setToken(urlToken);
+    }
+  }, [urlToken]);
+
+  async function solicitarRecuperacao(e) {
+    e.preventDefault();
+    setErro("");
+    setSucesso("");
+    setDevInfo("");
+    setCarregando(true);
+
+    try {
+      const res = await fetch(`${API_URL}/recuperar-senha/solicitar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setErro(data.error || "Erro ao solicitar recuperação.");
+        setCarregando(false);
+        return;
+      }
+
+      setSucesso(data.message);
+      if (data.token) {
+        setToken(data.token);
+      }
+      
+      if (data.simulated && data.codigo) {
+        setDevInfo(`[MODO DE TESTES] Código gerado no servidor: ${data.codigo}`);
+        setCodigo(data.codigo);
+      }
+
+      setStep(2);
+    } catch (err) {
+      setErro("Erro ao comunicar com o servidor.");
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  async function resetarSenha(e) {
+    e.preventDefault();
+    setErro("");
+    setSucesso("");
+    setCarregando(true);
+
+    if (novaSenha !== confirmarSenha) {
+      setErro("As senhas não coincidem.");
+      setCarregando(false);
+      return;
+    }
+
+    if (novaSenha.length < 6) {
+      setErro("A senha deve ter pelo menos 6 caracteres.");
+      setCarregando(false);
+      return;
+    }
+
+    try {
+      const payload = { novaSenha };
+      if (token) {
+        payload.token = token;
+      } else {
+        payload.codigo = codigo;
+        payload.email = email;
+      }
+
+      const res = await fetch(`${API_URL}/recuperar-senha/resetar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setErro(data.error || "Erro ao redefinir a senha.");
+        setCarregando(false);
+        return;
+      }
+
+      setSucesso("Senha redefinida com sucesso! Redirecionando para o login...");
+      setUrlToken("");
+      setTimeout(() => {
+        setPagina("login");
+      }, 3000);
+    } catch (err) {
+      setErro("Erro ao comunicar com o servidor.");
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  function voltar() {
+    setUrlToken("");
+    setPagina("login");
+  }
+
+  return (
+    <div className="login-container">
+      <div className="card login-card" style={{ maxWidth: "450px", width: "100%" }}>
+        <h2>Recuperação de Senha</h2>
+        <p style={{ color: "var(--text-secondary)", marginBottom: "20px" }}>
+          {step === 1 
+            ? "Informe seu e-mail cadastrado para enviarmos as instruções." 
+            : "Preencha a nova senha de acesso."
+          }
+        </p>
+
+        {erro && <div className="alert alert-error" style={{ padding: "10px", fontSize: "0.85rem", marginBottom: "15px" }}>{erro}</div>}
+        {sucesso && <div className="alert alert-success" style={{ padding: "10px", fontSize: "0.85rem", marginBottom: "15px" }}>{sucesso}</div>}
+        {devInfo && <div className="alert alert-info" style={{ padding: "10px", fontSize: "0.85rem", marginBottom: "15px", background: "rgba(251, 191, 36, 0.1)", border: "1px dashed var(--primary)", color: "var(--primary)" }}>{devInfo}</div>}
+
+        {step === 1 ? (
+          <form onSubmit={solicitarRecuperacao}>
+            <div className="form-group" style={{ marginBottom: "20px" }}>
+              <label>Endereço de E-mail</label>
+              <input 
+                type="email" 
+                value={email} 
+                onChange={e => setEmail(e.target.value)} 
+                required 
+                placeholder="vendedor@email.com" 
+                disabled={carregando}
+              />
+            </div>
+
+            <button className="btn btn-primary" style={{ width: "100%" }} type="submit" disabled={carregando}>
+              {carregando ? "Enviando..." : "Enviar Código de Recuperação"}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={resetarSenha}>
+            {!token && (
+              <>
+                <div className="form-group" style={{ marginBottom: "15px" }}>
+                  <label>E-mail Confirmado</label>
+                  <input 
+                    type="email" 
+                    value={email} 
+                    onChange={e => setEmail(e.target.value)} 
+                    required 
+                    placeholder="vendedor@email.com" 
+                    disabled={!!email || carregando}
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: "15px" }}>
+                  <label>Código de 6 dígitos enviado por e-mail</label>
+                  <input 
+                    type="text" 
+                    maxLength="6"
+                    value={codigo} 
+                    onChange={e => setCodigo(e.target.value.replace(/\D/g, ""))} 
+                    required 
+                    placeholder="Ex: 123456" 
+                    disabled={carregando}
+                    style={{ textAlign: "center", fontSize: "1.2rem", letterSpacing: "4px", fontWeight: "bold" }}
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="form-group" style={{ marginBottom: "15px" }}>
+              <label>Nova Senha de Acesso</label>
+              <input 
+                type="password" 
+                value={novaSenha} 
+                onChange={e => setNovaSenha(e.target.value)} 
+                required 
+                placeholder="No mínimo 6 caracteres" 
+                disabled={carregando}
+              />
+            </div>
+
+            <div className="form-group" style={{ marginBottom: "20px" }}>
+              <label>Confirmar Nova Senha</label>
+              <input 
+                type="password" 
+                value={confirmarSenha} 
+                onChange={e => setConfirmarSenha(e.target.value)} 
+                required 
+                placeholder="Repita a nova senha" 
+                disabled={carregando}
+              />
+            </div>
+
+            <button className="btn btn-primary" style={{ width: "100%" }} type="submit" disabled={carregando}>
+              {carregando ? "Processando..." : "Redefinir Minha Senha"}
+            </button>
+          </form>
+        )}
+
+        <button 
+          className="btn btn-secondary" 
+          style={{ width: "100%", marginTop: "10px" }} 
+          type="button" 
+          onClick={voltar}
+          disabled={carregando}
+        >
+          Voltar ao Login
+        </button>
+      </div>
+    </div>
+  );
+}
+

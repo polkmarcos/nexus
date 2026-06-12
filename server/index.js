@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { randomUUID } from "crypto";
+import nodemailer from "nodemailer";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -865,6 +866,193 @@ app.post("/login", (req, res) => {
   }
 });
 
+// PASSWORD RECOVERY / FORGOT PASSWORD FLOW
+async function enviarEmailRecuperacao(email, codigo, token, req) {
+  const configs = db.prepare("SELECT * FROM configuracoes").all();
+  const smtp = {};
+  for (const c of configs) {
+    if (c.chave.startsWith("smtp_")) {
+      smtp[c.chave] = c.valor;
+    }
+  }
+
+  const hostUrl = req.headers.referer || `${req.protocol}://${req.get('host')}`;
+  const recoveryUrl = `${hostUrl.split('?')[0]}?recuperar_token=${token}`;
+
+  const hasSmtpConfig = smtp.smtp_host && smtp.smtp_port && smtp.smtp_user && smtp.smtp_pass && smtp.smtp_from;
+
+  console.log(`\n=== [E-mail de Recuperação de Senha] ===`);
+  console.log(`Para: ${email}`);
+  console.log(`Código de Verificação: ${codigo}`);
+  console.log(`URL de Recuperação: ${recoveryUrl}`);
+  console.log(`=========================================\n`);
+
+  if (!hasSmtpConfig) {
+    console.log("Aviso: Configurações de SMTP incompletas. O e-mail foi apenas logado no console.");
+    return { ok: true, simulated: true };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtp.smtp_host,
+    port: parseInt(smtp.smtp_port) || 587,
+    secure: parseInt(smtp.smtp_port) === 465,
+    auth: {
+      user: smtp.smtp_user,
+      pass: smtp.smtp_pass
+    }
+  });
+
+  const mailOptions = {
+    from: `Nexus Suporte <${smtp.smtp_from}>`,
+    to: email,
+    subject: "Recuperação de Senha - Nexus CRM",
+    html: `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #0f172a; color: #f8fafc; border-radius: 12px; border: 1px solid #1e293b;">
+        <h2 style="color: #fbbf24; font-family: 'Outfit', sans-serif; text-align: center;">Recuperação de Senha - Nexus</h2>
+        <p style="font-size: 1.05rem; line-height: 1.6; color: #cbd5e1;">Você solicitou a redefinição de sua senha de acesso ao portal do vendedor.</p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <p style="font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">Seu Código de Verificação</p>
+          <div style="font-size: 2.25rem; font-weight: bold; color: #f8fafc; background: #1e293b; padding: 12px 24px; border-radius: 8px; display: inline-block; letter-spacing: 6px; border: 1px solid #334155;">
+            ${codigo}
+          </div>
+        </div>
+
+        <p style="font-size: 1.05rem; line-height: 1.6; color: #cbd5e1; text-align: center;">Ou se preferir, clique no botão abaixo para redefinir sua senha diretamente:</p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${recoveryUrl}" target="_blank" style="background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); color: #000000; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: bold; font-size: 1.1rem; display: inline-block; box-shadow: 0 4px 12px rgba(251, 191, 36, 0.3);">
+            Criar Nova Senha
+          </a>
+        </div>
+
+        <p style="font-size: 0.85rem; color: #64748b; line-height: 1.5; text-align: center; margin-top: 40px; border-top: 1px solid #1e293b; padding-top: 20px;">
+          Este código e link expiram em 15 minutos.<br>
+          Se você não solicitou a recuperação, pode ignorar este e-mail com segurança.
+        </p>
+      </div>
+    `
+  };
+
+  await transporter.sendMail(mailOptions);
+  return { ok: true, simulated: false };
+}
+
+app.post("/recuperar-senha/solicitar", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ ok: false, error: "O e-mail é obrigatório." });
+    }
+
+    const vendedor = db.prepare("SELECT * FROM vendedores WHERE email = ?").get(email.trim());
+    if (!vendedor) {
+      return res.status(404).json({ ok: false, error: "E-mail não cadastrado no sistema." });
+    }
+
+    const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+    const token = randomUUID();
+    const expiraEm = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+    db.prepare(`
+      INSERT INTO recuperacao_senha (id, email, codigo, token, expira_em, usado)
+      VALUES (?, ?, ?, ?, ?, 0)
+    `).run(randomUUID(), email.trim(), codigo, token, expiraEm);
+
+    const result = await enviarEmailRecuperacao(email.trim(), codigo, token, req);
+
+    res.json({
+      ok: true,
+      message: result.simulated
+        ? "Código enviado no console do servidor (SMTP não configurado)."
+        : "Código de recuperação enviado para seu e-mail.",
+      simulated: result.simulated,
+      codigo: result.simulated ? codigo : undefined,
+      token: result.simulated ? token : undefined
+    });
+  } catch (error) {
+    console.error("Erro ao solicitar recuperação:", error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/recuperar-senha/verificar", (req, res) => {
+  try {
+    const { token, codigo, email } = req.body;
+
+    let recovery;
+    if (token) {
+      recovery = db.prepare(`
+        SELECT * FROM recuperacao_senha 
+        WHERE token = ? AND usado = 0
+      `).get(token);
+    } else if (codigo && email) {
+      recovery = db.prepare(`
+        SELECT * FROM recuperacao_senha 
+        WHERE codigo = ? AND email = ? AND usado = 0
+      `).get(codigo, email.trim());
+    }
+
+    if (!recovery) {
+      return res.status(400).json({ ok: false, error: "Código ou token de verificação inválido." });
+    }
+
+    if (new Date(recovery.expira_em) < new Date()) {
+      return res.status(400).json({ ok: false, error: "Código ou token expirou (limite de 15 minutos)." });
+    }
+
+    res.json({
+      ok: true,
+      email: recovery.email,
+      token: recovery.token
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/recuperar-senha/resetar", (req, res) => {
+  try {
+    const { token, codigo, email, novaSenha } = req.body;
+    if (!novaSenha || novaSenha.trim() === "") {
+      return res.status(400).json({ ok: false, error: "A nova senha é obrigatória." });
+    }
+
+    let recovery;
+    if (token) {
+      recovery = db.prepare(`
+        SELECT * FROM recuperacao_senha 
+        WHERE token = ? AND usado = 0
+      `).get(token);
+    } else if (codigo && email) {
+      recovery = db.prepare(`
+        SELECT * FROM recuperacao_senha 
+        WHERE codigo = ? AND email = ? AND usado = 0
+      `).get(codigo, email.trim());
+    }
+
+    if (!recovery) {
+      return res.status(400).json({ ok: false, error: "Operação inválida. Código ou token inexistente." });
+    }
+
+    if (new Date(recovery.expira_em) < new Date()) {
+      return res.status(400).json({ ok: false, error: "Código ou token expirou." });
+    }
+
+    db.transaction(() => {
+      db.prepare("UPDATE vendedores SET senha = ? WHERE email = ?")
+        .run(novaSenha.trim(), recovery.email);
+
+      db.prepare("UPDATE recuperacao_senha SET usado = 1 WHERE id = ?")
+        .run(recovery.id);
+    })();
+
+    res.json({ ok: true, message: "Senha redefinida com sucesso!" });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
 // ADMIN CONFIGURATIONS & AUTHENTICATION
 app.post("/admin/login", (req, res) => {
   try {
@@ -922,9 +1110,13 @@ app.put("/configuracoes", (req, res) => {
       query_disparo,
       nicho_disparo,
       limite_disparo,
-      mensagem_resposta_robo,
       mensagem_resposta_humano,
-      whatsapp_suporte
+      whatsapp_suporte,
+      smtp_host,
+      smtp_port,
+      smtp_user,
+      smtp_pass,
+      smtp_from
     } = req.body;
     
     db.transaction(() => {
@@ -981,6 +1173,31 @@ app.put("/configuracoes", (req, res) => {
       if (whatsapp_suporte !== undefined) {
         db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('whatsapp_suporte', ?)")
           .run(String(whatsapp_suporte).trim());
+      }
+
+      if (smtp_host !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('smtp_host', ?)")
+          .run(String(smtp_host).trim());
+      }
+
+      if (smtp_port !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('smtp_port', ?)")
+          .run(String(smtp_port).trim());
+      }
+
+      if (smtp_user !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('smtp_user', ?)")
+          .run(String(smtp_user).trim());
+      }
+
+      if (smtp_pass !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('smtp_pass', ?)")
+          .run(String(smtp_pass));
+      }
+
+      if (smtp_from !== undefined) {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('smtp_from', ?)")
+          .run(String(smtp_from).trim());
       }
     })();
     

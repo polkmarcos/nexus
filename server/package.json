@@ -11,13 +11,19 @@
     "better-sqlite3": "^12.4.6",
     "cors": "^2.8.5",
     "express": "^5.2.1",
+    "nodemailer": "^8.0.11",
     "playwright": "^1.60.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"
   },
   "nodemonConfig": {
-    "watch": ["index.js", "db.js", "scraper.js", "whatsapp.js"],
+    "watch": [
+      "index.js",
+      "db.js",
+      "scraper.js",
+      "whatsapp.js"
+    ],
     "ignore": [
       "whatsapp-sessions/**",
       "whatsapp-sessions/*",
