@@ -546,10 +546,40 @@ async function scanUnreadMessages(vendedorId, page) {
 
   if (unreadChats.length === 0) return;
 
+  // Query leads assigned to this seller first to filter chats BEFORE clicking
+  const leads = db.prepare("SELECT * FROM leads WHERE vendedor_id = ?").all(vendedorId);
+
   const textboxSelector = '#main div[contenteditable="true"], div[data-testid="conversation-text-input"], div[data-testid="compose-input"]';
 
   for (const chat of unreadChats) {
-    console.log(`[Chat Monitor] Lendo mensagens não lidas de: "${chat.title}"`);
+    if (!chat.title) continue;
+
+    // 1. Check if the chat matches a lead in our DB BEFORE clicking on it
+    const cleanTitle = chat.title.replace(/\D/g, '');
+    const titleIsNumeric = cleanTitle.length >= 10 && /^\d+$/.test(cleanTitle);
+
+    let matchedLead = null;
+    if (titleIsNumeric) {
+      matchedLead = leads.find(l => {
+        const cleanDb = l.telefone.replace(/\D/g, '');
+        return cleanDb === cleanTitle || cleanDb.endsWith(cleanTitle) || cleanTitle.endsWith(cleanDb);
+      });
+    } else {
+      const cleanTitleLower = chat.title.trim().toLowerCase();
+      // Match by company name (empresa)
+      matchedLead = leads.find(l => {
+        const cleanEmpresa = l.empresa.trim().toLowerCase();
+        return cleanEmpresa === cleanTitleLower || cleanEmpresa.includes(cleanTitleLower) || cleanTitleLower.includes(cleanEmpresa);
+      });
+    }
+
+    // If the chat does NOT belong to one of our leads, completely skip it!
+    // This prevents marking personal or unrelated chats as read.
+    if (!matchedLead) {
+      continue;
+    }
+
+    console.log(`[Chat Monitor] Lendo mensagens não lidas de: "${chat.title}" (Empresa: ${matchedLead.empresa})`);
 
     // Click row with this title
     const chatRowSelector = `div[role="row"]:has(span[title="${chat.title}"]), div[role="row"]:has([data-testid="chat-title"]:has-text("${chat.title}"))`;
@@ -558,91 +588,49 @@ async function scanUnreadMessages(vendedorId, page) {
       await rowEl.click().catch(() => {});
       await new Promise(r => setTimeout(r, 2000)); // Wait for messages to load
 
-      let phone = chat.title.replace(/\D/g, '');
-      const isNumeric = phone.length >= 10 && /^\d+$/.test(phone);
+      // Extract last 5 messages from `#main`
+      const chatMsgs = await page.evaluate(() => {
+        const bubbles = Array.from(document.querySelectorAll('#main div[data-testid="msg-container"], #main div.message-in, #main div.message-out'));
+        const lastBubbles = bubbles.slice(-5);
+        return lastBubbles.map(b => {
+          const isOut = b.classList.contains('message-out') || !!b.querySelector('.message-out') || b.innerHTML.includes('message-out');
+          const textEl = b.querySelector('span.selectable-text, span.copyable-text');
+          const text = textEl ? textEl.innerText : '';
+          return {
+            direcao: isOut ? 'out' : 'in',
+            texto: text
+          };
+        }).filter(m => m.texto.trim() !== '');
+      }).catch(() => []);
 
-      if (!isNumeric) {
-        // Saved contact name, open Contact Info drawer to extract number
-        const headerEl = await page.$('#main header, div[data-testid="conversation-header"]').catch(() => null);
-        if (headerEl) {
-          await headerEl.click().catch(() => {});
-          await new Promise(r => setTimeout(r, 2000));
+      let newMessages = 0;
+      for (const msg of chatMsgs) {
+        const exists = db.prepare(`
+          SELECT 1 FROM mensagens_chat
+          WHERE lead_id = ? AND direcao = ? AND texto = ?
+        `).get(matchedLead.id, msg.direcao, msg.texto);
 
-          const contactInfoText = await page.evaluate(() => {
-            const drawer = document.querySelector('div[data-testid="contact-info-drawer"], div[role="region"]');
-            return drawer ? drawer.innerText : "";
-          }).catch(() => "");
+        if (!exists) {
+          const idMsg = 'wa_' + Math.random().toString(36).substring(2, 11);
+          const now = new Date().toISOString();
+          db.prepare(`
+            INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(idMsg, matchedLead.id, vendedorId, msg.direcao, msg.texto, now);
+          newMessages++;
 
-          const phoneMatch = contactInfoText.match(/\+55\s?\(?\d{2}\)?\s?\d{4,5}-?\d{4}|\+55\s?\d{2}\s?\d{9}|\+55\d{10,11}/);
-          if (phoneMatch) {
-            phone = phoneMatch[0].replace(/\D/g, '');
-          } else {
-            const generalPhoneMatch = contactInfoText.match(/\+\d{1,4}[ \d()-]+/);
-            if (generalPhoneMatch) {
-              phone = generalPhoneMatch[0].replace(/\D/g, '');
-            }
+          if (msg.direcao === 'in') {
+            db.prepare(`
+              UPDATE leads
+              SET status = 'Conversando', atualizado_em = ?
+              WHERE id = ?
+            `).run(now, matchedLead.id);
           }
-
-          // Close Contact Info drawer by pressing Escape
-          await page.keyboard.press("Escape").catch(() => {});
-          await new Promise(r => setTimeout(r, 1000));
         }
       }
 
-      if (phone.length >= 10) {
-        // Query leads assigned to this seller
-        const leads = db.prepare("SELECT * FROM leads WHERE vendedor_id = ?").all(vendedorId);
-        const matchedLead = leads.find(l => {
-          const cleanDb = l.telefone.replace(/\D/g, '');
-          return cleanDb === phone || cleanDb.endsWith(phone) || phone.endsWith(cleanDb);
-        });
-
-        if (matchedLead) {
-          // Extract last 5 messages from `#main`
-          const chatMsgs = await page.evaluate(() => {
-            const bubbles = Array.from(document.querySelectorAll('#main div[data-testid="msg-container"], #main div.message-in, #main div.message-out'));
-            const lastBubbles = bubbles.slice(-5);
-            return lastBubbles.map(b => {
-              const isOut = b.classList.contains('message-out') || !!b.querySelector('.message-out') || b.innerHTML.includes('message-out');
-              const textEl = b.querySelector('span.selectable-text, span.copyable-text');
-              const text = textEl ? textEl.innerText : '';
-              return {
-                direcao: isOut ? 'out' : 'in',
-                texto: text
-              };
-            }).filter(m => m.texto.trim() !== '');
-          }).catch(() => []);
-
-          let newMessages = 0;
-          for (const msg of chatMsgs) {
-            const exists = db.prepare(`
-              SELECT 1 FROM mensagens_chat
-              WHERE lead_id = ? AND direcao = ? AND texto = ?
-            `).get(matchedLead.id, msg.direcao, msg.texto);
-
-            if (!exists) {
-              const idMsg = 'wa_' + Math.random().toString(36).substring(2, 11);
-              const now = new Date().toISOString();
-              db.prepare(`
-                INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
-              `).run(idMsg, matchedLead.id, vendedorId, msg.direcao, msg.texto, now);
-              newMessages++;
-
-              if (msg.direcao === 'in') {
-                db.prepare(`
-                  UPDATE leads
-                  SET status = 'Conversando', atualizado_em = ?
-                  WHERE id = ?
-                `).run(now, matchedLead.id);
-              }
-            }
-          }
-
-          if (newMessages > 0) {
-            console.log(`[Chat Monitor] ${newMessages} novas mensagens salvas para: ${matchedLead.empresa}`);
-          }
-        }
+      if (newMessages > 0) {
+        console.log(`[Chat Monitor] ${newMessages} novas mensagens salvas para: ${matchedLead.empresa}`);
       }
     }
   }
