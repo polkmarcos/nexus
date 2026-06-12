@@ -4572,7 +4572,34 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
   const [sucesso, setSucesso] = useState("");
   const [whatsappStatus, setWhatsappStatus] = useState("disconnected");
   
-  const [limiteDisparo, setLimiteDisparo] = useState("10");
+  const [limiteDesejado, setLimiteDesejado] = useState(usuarioLogado.limite_diario || 10);
+
+  useEffect(() => {
+    if (usuarioLogado.limite_diario) {
+      setLimiteDesejado(usuarioLogado.limite_diario);
+    }
+  }, [usuarioLogado.limite_diario]);
+
+  async function alterarLimiteDesejado(e) {
+    const val = Math.max(1, Number(e.target.value));
+    setLimiteDesejado(val);
+    
+    try {
+      const res = await fetch(`${API_URL}/vendedores/${usuarioLogado.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limite_diario: val })
+      });
+      if (res.ok) {
+        const updatedUser = { ...usuarioLogado, limite_diario: val };
+        localStorage.setItem("usuarioLogado", JSON.stringify(updatedUser));
+        setUsuarioLogado(updatedUser);
+        setStats(s => ({ ...s, limite_diario: val }));
+      }
+    } catch (err) {
+      console.error("Erro ao salvar limite diário:", err);
+    }
+  }
   
   // Pre-sale Modal State
   const [modalLead, setModalLead] = useState(null);
@@ -4809,39 +4836,55 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
       {erro && <div className="alert alert-error">{erro}</div>}
       {sucesso && <div className="alert alert-success">{sucesso}</div>}
 
-      {/* Aviso de Limite Diário e Risco de Bloqueio */}
-      <div className="card" style={{ 
-        background: "linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(217, 119, 6, 0.05) 100%)", 
-        border: "1px solid rgba(245, 158, 11, 0.3)", 
-        borderRadius: "16px",
-        padding: "24px",
-        marginBottom: "24px",
-        boxShadow: "0 8px 32px rgba(245, 158, 11, 0.05)",
-        textAlign: "left"
-      }}>
-        <h3 style={{ color: "#d97706", display: "flex", alignItems: "center", gap: "8px", margin: "0 0 12px 0", fontSize: "1.15rem", fontWeight: "700" }}>
-          ⚠️ Atenção: Risco de Bloqueio no WhatsApp
-        </h3>
-        <p style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: "1.6", margin: 0 }}>
-          Se você exagerar na quantidade de envios diários, o WhatsApp pode bloquear ou banir o seu número. 
-          Recomendamos fortemente a <strong>sugestão de 10 leads por dia</strong> para manter seu chip aquecido e seguro.
-          Atualmente, sua conta está configurada com um limite diário de até <strong>{stats.limite_diario} leads/dia</strong>.
-        </p>
-      </div>
+      {/* Aviso de Limite Diário e Risco de Bloqueio se for maior que 10 */}
+      {limiteDesejado > 10 && (
+        <div className="card" style={{ 
+          background: "linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(217, 119, 6, 0.05) 100%)", 
+          border: "1px solid rgba(245, 158, 11, 0.3)", 
+          borderRadius: "16px",
+          padding: "24px",
+          marginBottom: "24px",
+          boxShadow: "0 8px 32px rgba(245, 158, 11, 0.05)",
+          textAlign: "left"
+        }}>
+          <h3 style={{ color: "#d97706", display: "flex", alignItems: "center", gap: "8px", margin: "0 0 12px 0", fontSize: "1.15rem", fontWeight: "700" }}>
+            ⚠️ Atenção: Alto Risco de Bloqueio no WhatsApp
+          </h3>
+          <p style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: "1.6", margin: 0 }}>
+            Você configurou o robô para enviar <strong>{limiteDesejado} leads por dia</strong>. 
+            Como este valor é superior a 10, o WhatsApp pode perceber um padrão de envio em massa e bloquear ou banir o seu número. 
+            Recomendamos fortemente manter a <strong>sugestão de 10 leads por dia</strong> para sua segurança.
+          </p>
+        </div>
+      )}
 
       <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-          <div className="form-group" style={{ minWidth: "220px", margin: 0 }}>
-            <select value={statusFiltro} onChange={e => setStatusFiltro(e.target.value)}>
+        <div style={{ display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap" }}>
+          <div className="form-group" style={{ minWidth: "180px", margin: 0 }}>
+            <label style={{ fontSize: "0.8rem", marginBottom: "4px", display: "block" }}>Filtrar Status</label>
+            <select value={statusFiltro} onChange={e => setStatusFiltro(e.target.value)} style={{ margin: 0 }}>
               <option value="">Todos os status</option>
               {statusUnicos.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
 
+          <div className="form-group" style={{ margin: 0 }}>
+            <label style={{ fontSize: "0.8rem", marginBottom: "4px", display: "block" }}>Disparos Diários do Robô</label>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <input 
+                type="number" 
+                min="1" 
+                max="500" 
+                value={limiteDesejado} 
+                onChange={alterarLimiteDesejado}
+                style={{ width: "70px", padding: "8px", margin: 0, textAlign: "center" }}
+              />
+              <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>leads/dia</span>
+            </div>
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: "15px", alignItems: "center", flexWrap: "wrap" }}>
-          {/* Limite agora é configurado pelo admin — sem campo manual aqui */}
           {isSending ? (
             <button 
               className="btn btn-danger pulse" 
