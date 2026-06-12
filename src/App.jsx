@@ -1711,6 +1711,7 @@ function AdminLeads() {
   const [filtros, setFiltros] = useState({ nicho: "", status: "" });
   const [distribuindo, setDistribuindo] = useState(false);
   const [mensagemStatus, setMensagemStatus] = useState("");
+  const [selectedChatLead, setSelectedChatLead] = useState(null);
 
   // Estados para Importação de CSV
   const [csvFile, setCsvFile] = useState(null);
@@ -1853,6 +1854,10 @@ function AdminLeads() {
 
   useEffect(() => {
     carregarLeads();
+    const interval = setInterval(() => {
+      carregarLeads();
+    }, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   async function distribuirLeads() {
@@ -2127,6 +2132,7 @@ function AdminLeads() {
                 <th>Cidade/UF</th>
                 <th>Status</th>
                 <th>Vendedor Responsável</th>
+                <th>Última Mensagem</th>
                 <th>Origem</th>
                 <th style={{ textAlign: "center" }}>Ações</th>
               </tr>
@@ -2134,7 +2140,7 @@ function AdminLeads() {
             <tbody>
               {leadsFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan="8" style={{ textAlign: "center" }}>Nenhum lead encontrado com os filtros atuais.</td>
+                  <td colSpan="9" style={{ textAlign: "center" }}>Nenhum lead encontrado com os filtros atuais.</td>
                 </tr>
               ) : (
                 leadsFiltrados.map(l => (
@@ -2154,6 +2160,46 @@ function AdminLeads() {
                       </span>
                     </td>
                     <td>{l.vendedor_nome ? <strong>👤 {l.vendedor_nome}</strong> : <span style={{ color: "var(--text-tertiary)" }}>Não atribuído</span>}</td>
+                    <td>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                        {l.ultima_mensagem ? (
+                          <div 
+                            style={{ 
+                              maxWidth: "180px", 
+                              overflow: "hidden", 
+                              textOverflow: "ellipsis", 
+                              whiteSpace: "nowrap",
+                              fontSize: "0.85rem",
+                              color: "var(--text-secondary)"
+                            }} 
+                            title={l.ultima_mensagem}
+                          >
+                            {l.ultima_mensagem}
+                          </div>
+                        ) : (
+                          <span style={{ color: "var(--text-tertiary)", fontSize: "0.85rem" }}>Nenhuma enviada</span>
+                        )}
+                        {l.vendedor_id && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ 
+                              padding: "3px 8px", 
+                              fontSize: "0.75rem", 
+                              width: "fit-content",
+                              marginTop: "2px",
+                              background: "rgba(217, 119, 6, 0.1)",
+                              borderColor: "rgba(217, 119, 6, 0.2)",
+                              color: "var(--primary)",
+                              cursor: "pointer"
+                            }}
+                            onClick={() => setSelectedChatLead(l)}
+                          >
+                            💬 Ver Histórico
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td><small>{l.origem}<br />({l.query_origem})</small></td>
                     <td style={{ textAlign: "center" }}>
                       <button 
@@ -2172,6 +2218,15 @@ function AdminLeads() {
           </table>
         </div>
       </div>
+
+      {selectedChatLead && (
+        <ChatDrawer
+          lead={selectedChatLead}
+          vendedorId={selectedChatLead.vendedor_id}
+          onClose={() => setSelectedChatLead(null)}
+          readOnly={true}
+        />
+      )}
     </section>
   );
 }
@@ -4975,7 +5030,7 @@ function LoginAdmin({ loginAdminSucesso, setPagina }) {
   );
 }
 
-function ChatDrawer({ lead, vendedorId, onClose, onMessageSent }) {
+function ChatDrawer({ lead, vendedorId, onClose, onMessageSent, readOnly = false }) {
   const [mensagens, setMensagens] = useState([]);
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -4986,7 +5041,7 @@ function ChatDrawer({ lead, vendedorId, onClose, onMessageSent }) {
   const isOpen = !!lead;
 
   useEffect(() => {
-    if (!lead) {
+    if (!lead || readOnly) {
       setTemplates([]);
       return;
     }
@@ -5050,6 +5105,7 @@ function ChatDrawer({ lead, vendedorId, onClose, onMessageSent }) {
 
   async function enviar(e) {
     e.preventDefault();
+    if (readOnly) return;
     if (!texto.trim() || enviando) return;
 
     const textoMsg = texto.trim();
@@ -5149,7 +5205,7 @@ function ChatDrawer({ lead, vendedorId, onClose, onMessageSent }) {
           )}
         </div>
 
-        {templates.length > 0 && (
+        {!readOnly && templates.length > 0 && (
           <div className="chat-drawer-templates-container">
             <div className="chat-drawer-templates-label">Respostas Rápidas</div>
             <div className="chat-drawer-templates">
@@ -5168,20 +5224,22 @@ function ChatDrawer({ lead, vendedorId, onClose, onMessageSent }) {
           </div>
         )}
 
-        <form className="chat-drawer-footer" onSubmit={enviar}>
-          <input
-            type="text"
-            className="chat-drawer-input"
-            placeholder="Digite uma mensagem..."
-            value={texto}
-            onChange={(e) => setTexto(e.target.value)}
-            disabled={enviando}
-            autoFocus
-          />
-          <button type="submit" className="chat-drawer-send-btn" disabled={!texto.trim() || enviando}>
-            {enviando ? "..." : "Enviar"}
-          </button>
-        </form>
+        {!readOnly && (
+          <form className="chat-drawer-footer" onSubmit={enviar}>
+            <input
+              type="text"
+              className="chat-drawer-input"
+              placeholder="Digite uma mensagem..."
+              value={texto}
+              onChange={(e) => setTexto(e.target.value)}
+              disabled={enviando}
+              autoFocus
+            />
+            <button type="submit" className="chat-drawer-send-btn" disabled={!texto.trim() || enviando}>
+              {enviando ? "..." : "Enviar"}
+            </button>
+          </form>
+        )}
       </div>
     </>
   );
