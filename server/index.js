@@ -1738,6 +1738,7 @@ app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
     // Marcar que está em disparo para evitar conflito com o monitor de sessão
     session.abortSending = false;
     session.isSending = true;
+    session.isProcessingQueue = true;
 
     // Responder imediatamente ao frontend — o pipeline roda em background
     res.json({
@@ -1925,9 +1926,11 @@ app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
 
       console.log(`[Disparo] Processamento concluído. Total enviados: ${totalEnviados}`);
       session.isSending = false;
+      session.isProcessingQueue = false;
     })().catch(err => {
       console.error(`[Disparo] Erro geral no loop em background:`, err.message);
       session.isSending = false;
+      session.isProcessingQueue = false;
     });
 
   } catch (error) {

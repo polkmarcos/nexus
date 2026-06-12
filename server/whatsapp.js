@@ -125,7 +125,8 @@ export async function conectarWhatsapp(vendedorId, telefone) {
     status: "starting",
     qrCode: null,
     phoneCode: null,
-    isSending: false
+    isSending: false,
+    isProcessingQueue: false
   };
   
   sessions.set(vendedorId, sessionInfo);
@@ -366,7 +367,7 @@ async function monitorSession(vendedorId, context, page) {
         
         // Scan for unread messages if connected, idle, and 12 seconds have passed since last scan
         const now = Date.now();
-        if (!session.isSending && (now - lastScanTime > 12000)) {
+        if (!session.isSending && !session.isProcessingQueue && (now - lastScanTime > 12000)) {
           lastScanTime = now;
           try {
             await scanUnreadMessages(vendedorId, page);
@@ -468,7 +469,7 @@ async function monitorSession(vendedorId, context, page) {
         } else if (session.status === "connected") {
           // We were connected, but now isLoggedIn is false.
           // If we are currently sending or navigating, this is normal/temporary.
-          if (session.isSending) {
+          if (session.isSending || session.isProcessingQueue) {
             // Skip checking connection loss during active send/nav operations
           } else {
             // Check if the QR code canvas or link button is actually visible on the page
@@ -525,7 +526,7 @@ async function monitorSession(vendedorId, context, page) {
  */
 async function scanUnreadMessages(vendedorId, page) {
   const session = sessions.get(vendedorId);
-  if (!session || session.isSending) return;
+  if (!session || session.isSending || session.isProcessingQueue) return;
 
   session.isSending = true;
   try {
@@ -814,7 +815,7 @@ export async function monitorarRespostaLead(vendedorId, lead, sentAt, msgsConfig
     }
 
     // Skip if currently sending — don't interrupt dispatch
-    if (session.isSending) {
+    if (session.isSending || session.isProcessingQueue) {
       console.log(`[Monitor] Sessão ocupada com disparo. Aguardando próxima janela para checar ${lead.empresa}...`);
       continue;
     }
@@ -1160,10 +1161,7 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
       await new Promise(r => setTimeout(r, delay));
     }
 
-    // Go back to main interface
-    if (session.status === "connected") {
-      await page.goto("https://web.whatsapp.com/", { waitUntil: "domcontentloaded" }).catch(() => {});
-    }
+    // (Stay on last chat screen to prevent full page reload)
 
     return resultados;
   } finally {
@@ -1182,7 +1180,7 @@ export async function enviarMensagemAvulsa(vendedorId, telefone, texto) {
 
   // Wait if another operation (like background sync) is in progress
   let waitAttempts = 0;
-  while (session.isSending && waitAttempts < 30) {
+  while ((session.isSending || session.isProcessingQueue) && waitAttempts < 30) {
     await new Promise(r => setTimeout(r, 500));
     waitAttempts++;
   }
@@ -1316,7 +1314,7 @@ export async function enviarMensagemAvulsa(vendedorId, telefone, texto) {
  */
 export async function sincronizarChatLead(vendedorId, leadId) {
   const session = sessions.get(vendedorId);
-  if (!session || session.status !== "connected" || session.isSending) {
+  if (!session || session.status !== "connected" || session.isSending || session.isProcessingQueue) {
     return false;
   }
 
@@ -1418,6 +1416,6 @@ export async function checkSessionStatus(vendedorId) {
     status: session.status,
     qrCode: session.qrCode,
     phoneCode: session.phoneCode || null,
-    isSending: session.isSending || false
+    isSending: session.isSending || session.isProcessingQueue || false
   };
 }
