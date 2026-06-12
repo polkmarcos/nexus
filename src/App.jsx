@@ -496,6 +496,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
   const [linkVendaPadrao, setLinkVendaPadrao] = useState("");
   const [configErro, setConfigErro] = useState("");
   const [configSucesso, setConfigSucesso] = useState("");
+  const [configAbaAtiva, setConfigAbaAtiva] = useState("geral");
 
   async function carregarDados() {
     try {
@@ -774,218 +775,211 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
 
       <div className="card" style={{ marginTop: "30px" }}>
         <h2>Configurações do Sistema</h2>
-        <p className="subtitle">Altere o limite de vendedores ativos e a senha de acesso administrativo.</p>
+        <p className="subtitle">Altere as configurações de licenças, vendas, disparo, robô de mensagens e SMTP de e-mail.</p>
         
         {configErro && <div className="alert alert-error">{configErro}</div>}
         {configSucesso && <div className="alert alert-success">{configSucesso}</div>}
+
+        {/* Tab navigation */}
+        <div style={{ 
+          display: "flex", 
+          gap: "8px", 
+          borderBottom: "1px solid var(--border-color)", 
+          paddingBottom: "12px", 
+          marginTop: "20px",
+          marginBottom: "20px",
+          overflowX: "auto",
+          whiteSpace: "nowrap"
+        }}>
+          {[
+            { id: "geral", label: "⚙️ Geral & Licenças" },
+            { id: "links", label: "🔗 Links de Venda" },
+            { id: "disparo", label: "🎯 Coleta & Disparo" },
+            { id: "robo", label: "🤖 Robô Auto-Reply" },
+            { id: "email", label: "📧 Servidor de E-mail (SMTP)" }
+          ].map(t => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setConfigAbaAtiva(t.id)}
+              style={{
+                background: configAbaAtiva === t.id ? "var(--primary)" : "rgba(255, 255, 255, 0.05)",
+                color: configAbaAtiva === t.id ? "#ffffff" : "var(--text-secondary)",
+                border: "1px solid " + (configAbaAtiva === t.id ? "var(--primary)" : "var(--border-color)"),
+                padding: "8px 16px",
+                borderRadius: "var(--border-radius)",
+                cursor: "pointer",
+                fontWeight: "600",
+                fontSize: "0.85rem",
+                width: "auto",
+                margin: 0,
+                transition: "all 0.2s ease"
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
         
-        <form onSubmit={salvarConfiguracoes} style={{ marginTop: "15px" }}>
-          <div className="form-grid">
-            <div className="form-group">
-              <label>Limite de Vendedores Ativos (Licenças)</label>
-              <input 
-                type="number" 
-                min="1" 
-                value={limiteVendedores} 
-                onChange={e => setLimiteVendedores(Number(e.target.value))} 
-                required 
-              />
-              <small style={{ color: "var(--text-secondary)" }}>
-                Vendedores adicionais ficarão automaticamente na fila de espera.
-              </small>
-            </div>
+        <form onSubmit={salvarConfiguracoes}>
+          {configAbaAtiva === "geral" && (
+            <div className="form-grid" style={{ marginTop: "10px" }}>
+              <div className="form-group">
+                <label>Limite de Vendedores Ativos (Licenças)</label>
+                <input 
+                  type="number" 
+                  min="1" 
+                  value={limiteVendedores} 
+                  onChange={e => setLimiteVendedores(Number(e.target.value))} 
+                  required 
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Vendedores adicionais ficarão automaticamente na fila de espera.
+                </small>
+              </div>
 
-            <div className="form-group">
-              <label>Preço do Produto (R$)</label>
-              <input 
-                type="number" 
-                min="0" 
-                step="0.01"
-                value={precoProduto} 
-                onChange={e => setPrecoProduto(Number(e.target.value))} 
-                required 
-              />
-              <small style={{ color: "var(--text-secondary)" }}>
-                Valor total cobrado por cada venda efetuada.
-              </small>
-            </div>
+              <div className="form-group">
+                <label>Preço do Produto (R$)</label>
+                <input 
+                  type="number" 
+                  min="0" 
+                  step="0.01"
+                  value={precoProduto} 
+                  onChange={e => setPrecoProduto(Number(e.target.value))} 
+                  required 
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Valor total cobrado por cada venda efetuada.
+                </small>
+              </div>
 
-            <div className="form-group">
-              <label>Comissão do Vendedor por Venda (R$)</label>
-              <input 
-                type="number" 
-                min="0" 
-                step="0.01"
-                value={comissaoVenda} 
-                onChange={e => setComissaoVenda(Number(e.target.value))} 
-                required 
-              />
-              <small style={{ color: "var(--text-secondary)" }}>
-                Comissão paga ao vendedor por cada venda aprovada.
-              </small>
-            </div>
-            
-            <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>🔗 Link de Solicitação de Afiliação (Kiwify)</label>
-              <input 
-                type="text" 
-                value={linkAfiliacaoKiwify} 
-                onChange={e => setLinkAfiliacaoKiwify(e.target.value)} 
-                required 
-                placeholder="Ex: https://dashboard.kiwify.com.br/affiliate/join/..."
-              />
-              <small style={{ color: "var(--text-secondary)" }}>
-                Este link será aberto quando o vendedor clicar em "Gerar Link" no cadastro de perfil para se filiar ao seu produto.
-              </small>
-            </div>
+              <div className="form-group">
+                <label>Comissão do Vendedor por Venda (R$)</label>
+                <input 
+                  type="number" 
+                  min="0" 
+                  step="0.01"
+                  value={comissaoVenda} 
+                  onChange={e => setComissaoVenda(Number(e.target.value))} 
+                  required 
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Comissão paga ao vendedor por cada venda aprovada.
+                </small>
+              </div>
 
-            <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>🛍️ Link de Venda Geral / Fallback (Site do Produto / Checkout)</label>
-              <input 
-                type="text" 
-                value={linkVendaPadrao} 
-                onChange={e => setLinkVendaPadrao(e.target.value)} 
-                required 
-                placeholder="Ex: https://pay.kiwify.com.br/..."
-              />
-              <small style={{ color: "var(--text-secondary)" }}>
-                Este link será enviado nas mensagens de prospecção/auto-reply para os clientes finais caso o vendedor não tenha cadastrado seu link de afiliação de vendas próprio.
-              </small>
-            </div>
+              <div className="form-group">
+                <label>Alterar Senha do Administrador</label>
+                <input 
+                  type="password" 
+                  value={novaSenhaAdmin} 
+                  onChange={e => setNovaSenhaAdmin(e.target.value)} 
+                  placeholder="Deixe em branco para não alterar" 
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Nova senha para login no painel de controle.
+                </small>
+              </div>
 
-            <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>🎯 Query de Disparo (Busca no Google Maps)</label>
-              <input
-                type="text"
-                value={queryDisparo}
-                onChange={e => setQueryDisparo(e.target.value)}
-                placeholder="Ex: hamburgueria em Mogi das Cruzes SP"
-                required
-              />
-              <small style={{ color: "var(--text-secondary)" }}>
-                Texto exato de busca que o vendedor usará ao disparar mensagens. Ex: <strong>"pizzaria em São Paulo SP"</strong>
-              </small>
+              <div className="form-group">
+                <label>📞 WhatsApp de Suporte (DDD + Número)</label>
+                <input 
+                  type="text" 
+                  value={whatsappSuporte} 
+                  onChange={e => setWhatsappSuporte(e.target.value)} 
+                  placeholder="Ex: 5511999999999" 
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Número com código do país (55) e DDD que os funcionários usarão para tirar dúvidas.
+                </small>
+              </div>
             </div>
+          )}
 
-            <div className="form-group">
-              <label>🏷️ Nicho de Disparo</label>
-              <input
-                type="text"
-                value={nichoDisparo}
-                onChange={e => setNichoDisparo(e.target.value)}
-                placeholder="Ex: hamburguerias"
-                required
-              />
-              <small style={{ color: "var(--text-secondary)" }}>
-                Categoria do nicho para classificação dos leads no banco de dados.
-              </small>
+          {configAbaAtiva === "links" && (
+            <div className="form-grid" style={{ marginTop: "10px" }}>
+              <div className="form-group" style={{ gridColumn: "span 2" }}>
+                <label>🔗 Link de Solicitação de Afiliação (Kiwify)</label>
+                <input 
+                  type="text" 
+                  value={linkAfiliacaoKiwify} 
+                  onChange={e => setLinkAfiliacaoKiwify(e.target.value)} 
+                  required 
+                  placeholder="Ex: https://dashboard.kiwify.com.br/affiliate/join/..."
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Este link será aberto quando o vendedor clicar em "Gerar Link" no cadastro de perfil para se filiar ao seu produto.
+                </small>
+              </div>
+
+              <div className="form-group" style={{ gridColumn: "span 2" }}>
+                <label>🛍️ Link de Venda Geral / Fallback (Site do Produto / Checkout)</label>
+                <input 
+                  type="text" 
+                  value={linkVendaPadrao} 
+                  onChange={e => setLinkVendaPadrao(e.target.value)} 
+                  required 
+                  placeholder="Ex: https://pay.kiwify.com.br/..."
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Este link será enviado nas mensagens de prospecção/auto-reply para os clientes finais caso o vendedor não tenha cadastrado seu link de afiliação de vendas próprio.
+                </small>
+              </div>
             </div>
+          )}
 
-            <div className="form-group">
-              <label>📊 Limite de Leads por Disparo</label>
-              <input
-                type="number"
-                min="5"
-                max="200"
-                value={limiteDisparo}
-                onChange={e => setLimiteDisparo(Number(e.target.value))}
-                required
-              />
-              <small style={{ color: "var(--text-secondary)" }}>
-                Quantidade máxima de leads que serão raspados e disparados por sessão de envio.
-              </small>
+          {configAbaAtiva === "disparo" && (
+            <div className="form-grid" style={{ marginTop: "10px" }}>
+              <div className="form-group" style={{ gridColumn: "span 2" }}>
+                <label>🎯 Query de Disparo (Busca no Google Maps)</label>
+                <input
+                  type="text"
+                  value={queryDisparo}
+                  onChange={e => setQueryDisparo(e.target.value)}
+                  placeholder="Ex: hamburgueria em Mogi das Cruzes SP"
+                  required
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Texto exato de busca que o vendedor usará ao disparar mensagens. Ex: <strong>"pizzaria em São Paulo SP"</strong>
+                </small>
+              </div>
+
+              <div className="form-group">
+                <label>🏷️ Nicho de Disparo</label>
+                <input
+                  type="text"
+                  value={nichoDisparo}
+                  onChange={e => setNichoDisparo(e.target.value)}
+                  placeholder="Ex: hamburguerias"
+                  required
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Categoria do nicho para classificação dos leads no banco de dados.
+                </small>
+              </div>
+
+              <div className="form-group">
+                <label>📊 Limite de Leads por Disparo</label>
+                <input
+                  type="number"
+                  min="5"
+                  max="200"
+                  value={limiteDisparo}
+                  onChange={e => setLimiteDisparo(Number(e.target.value))}
+                  required
+                />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  Quantidade máxima de leads que serão raspados e disparados por sessão de envio.
+                </small>
+              </div>
             </div>
+          )}
 
-            <div className="form-group">
-              <label>Alterar Senha do Administrador</label>
-              <input 
-                type="password" 
-                value={novaSenhaAdmin} 
-                onChange={e => setNovaSenhaAdmin(e.target.value)} 
-                placeholder="Deixe em branco para não alterar" 
-              />
-              <small style={{ color: "var(--text-secondary)" }}>
-                Nova senha para login no painel de controle.
-              </small>
-            </div>
-
-            <div className="form-group">
-              <label>📞 WhatsApp de Suporte (DDD + Número)</label>
-              <input 
-                type="text" 
-                value={whatsappSuporte} 
-                onChange={e => setWhatsappSuporte(e.target.value)} 
-                placeholder="Ex: 5511999999999" 
-              />
-              <small style={{ color: "var(--text-secondary)" }}>
-                Número com código do país (55) e DDD que os funcionários usarão para tirar dúvidas.
-              </small>
-            </div>
-
-            <div className="form-group" style={{ gridColumn: "span 2", marginTop: "20px", borderTop: "1px solid var(--border-color)", paddingTop: "20px" }}>
-              <strong style={{ fontSize: "1.1rem", color: "var(--primary)", display: "flex", alignItems: "center", gap: "6px" }}>
-                📧 Configurações de E-mail (SMTP para Recuperação de Senha)
-              </strong>
-              <p style={{ margin: "4px 0 12px 0", fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-                Defina o servidor de SMTP para envio de e-mails de recuperação de senha aos vendedores. Deixe em branco para simular no console.
-              </p>
-            </div>
-
-            <div className="form-group">
-              <label>SMTP Host</label>
-              <input 
-                type="text" 
-                value={smtpHost} 
-                onChange={e => setSmtpHost(e.target.value)} 
-                placeholder="Ex: smtp.hostinger.com" 
-              />
-            </div>
-
-            <div className="form-group">
-              <label>SMTP Porta</label>
-              <input 
-                type="text" 
-                value={smtpPort} 
-                onChange={e => setSmtpPort(e.target.value)} 
-                placeholder="Ex: 465 ou 587" 
-              />
-            </div>
-
-            <div className="form-group">
-              <label>SMTP Usuário / E-mail</label>
-              <input 
-                type="text" 
-                value={smtpUser} 
-                onChange={e => setSmtpUser(e.target.value)} 
-                placeholder="Ex: suporte@seudominio.com" 
-              />
-            </div>
-
-            <div className="form-group">
-              <label>SMTP Senha</label>
-              <input 
-                type="password" 
-                value={smtpPass} 
-                onChange={e => setSmtpPass(e.target.value)} 
-                placeholder="Senha do e-mail ou token" 
-              />
-            </div>
-
-            <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>SMTP Remetente (E-mail que envia)</label>
-              <input 
-                type="text" 
-                value={smtpFrom} 
-                onChange={e => setSmtpFrom(e.target.value)} 
-                placeholder="Ex: suporte@seudominio.com" 
-              />
-            </div>
-
+          {configAbaAtiva === "robo" && (
             <div style={{
-              gridColumn: "span 2",
-              padding: "16px 20px",
-              background: "rgba(59, 130, 246, 0.1)",
-              border: "1px solid rgba(59, 130, 246, 0.25)",
+              padding: "24px 30px",
+              background: "rgba(59, 130, 246, 0.08)",
+              border: "1px solid rgba(59, 130, 246, 0.2)",
               borderRadius: "8px",
               display: "flex",
               alignItems: "center",
@@ -995,10 +989,10 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
               flexWrap: "wrap"
             }}>
               <div style={{ flex: "1 1 300px" }}>
-                <strong style={{ color: "var(--primary)", display: "flex", alignItems: "center", gap: "6px" }}>
+                <strong style={{ color: "var(--primary)", display: "flex", alignItems: "center", gap: "6px", fontSize: "1.05rem" }}>
                   🤖 Respostas Automáticas (Robô vs Humano)
                 </strong>
-                <p style={{ margin: "6px 0 0 0", fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.4 }}>
+                <p style={{ margin: "6px 0 0 0", fontSize: "0.88rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>
                   Os modelos de mensagens enviadas automaticamente quando o lead responder (Robô/Menu digital ou Humano/Pessoa real) agora possuem um painel dedicado com explicações de critérios, variáveis e substituição do link de afiliado.
                 </p>
               </div>
@@ -1014,11 +1008,76 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
                 ⚙️ Configurar Respostas Automáticas
               </button>
             </div>
+          )}
+
+          {configAbaAtiva === "email" && (
+            <div className="form-grid" style={{ marginTop: "10px" }}>
+              <div className="form-group" style={{ gridColumn: "span 2" }}>
+                <strong style={{ fontSize: "1.1rem", color: "var(--primary)", display: "flex", alignItems: "center", gap: "6px" }}>
+                  📧 Servidor de E-mail (SMTP para Recuperação de Senha)
+                </strong>
+                <p style={{ margin: "4px 0 12px 0", fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                  Defina o servidor de SMTP para envio de e-mails de recuperação de senha aos vendedores. Deixe em branco para simular no console.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label>SMTP Host</label>
+                <input 
+                  type="text" 
+                  value={smtpHost} 
+                  onChange={e => setSmtpHost(e.target.value)} 
+                  placeholder="Ex: smtp.hostinger.com" 
+                />
+              </div>
+
+              <div className="form-group">
+                <label>SMTP Porta</label>
+                <input 
+                  type="text" 
+                  value={smtpPort} 
+                  onChange={e => setSmtpPort(e.target.value)} 
+                  placeholder="Ex: 465 ou 587" 
+                />
+              </div>
+
+              <div className="form-group">
+                <label>SMTP Usuário / E-mail</label>
+                <input 
+                  type="text" 
+                  value={smtpUser} 
+                  onChange={e => setSmtpUser(e.target.value)} 
+                  placeholder="Ex: suporte@seudominio.com" 
+                />
+              </div>
+
+              <div className="form-group">
+                <label>SMTP Senha</label>
+                <input 
+                  type="password" 
+                  value={smtpPass} 
+                  onChange={e => setSmtpPass(e.target.value)} 
+                  placeholder="Senha do e-mail ou token" 
+                />
+              </div>
+
+              <div className="form-group" style={{ gridColumn: "span 2" }}>
+                <label>SMTP Remetente (E-mail que envia)</label>
+                <input 
+                  type="text" 
+                  value={smtpFrom} 
+                  onChange={e => setSmtpFrom(e.target.value)} 
+                  placeholder="Ex: suporte@seudominio.com" 
+                />
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: "24px", borderTop: "1px solid var(--border-color)", paddingTop: "20px", display: "flex", justifyContent: "flex-end" }}>
+            <button className="btn btn-primary" type="submit" style={{ padding: "12px 30px", fontSize: "0.95rem", width: "auto", margin: 0 }}>
+              💾 Salvar Configurações
+            </button>
           </div>
-          
-          <button className="btn btn-primary" type="submit" style={{ marginTop: "10px" }}>
-            💾 Salvar Configurações
-          </button>
         </form>
       </div>
     </section>
