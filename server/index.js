@@ -1110,6 +1110,7 @@ app.put("/configuracoes", (req, res) => {
       query_disparo,
       nicho_disparo,
       limite_disparo,
+      mensagem_resposta_robo,
       mensagem_resposta_humano,
       whatsapp_suporte,
       smtp_host,
