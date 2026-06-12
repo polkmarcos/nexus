@@ -823,7 +823,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
             </div>
             
             <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>Link de Afiliação Geral Kiwify (URL)</label>
+              <label>🔗 Link de Afiliação Geral / Fallback (Kiwify ou Site)</label>
               <input 
                 type="text" 
                 value={linkAfiliacaoKiwify} 
@@ -832,7 +832,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
                 placeholder="Ex: https://dashboard.kiwify.com.br/affiliate/join/..."
               />
               <small style={{ color: "var(--text-secondary)" }}>
-                Este link será aberto quando o vendedor clicar em "Gerar Link" no cadastro de perfil.
+                Este link será enviado nas mensagens se o vendedor não cadastrar o seu link de afiliado próprio. Também será aberto no botão "Gerar Link" no cadastro de perfil.
               </small>
             </div>
 
