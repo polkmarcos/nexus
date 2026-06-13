@@ -2713,8 +2713,8 @@ function iniciarAgendadorRobo() {
       // Randomizar (+/- 30%)
       let intervaloRandom = intervaloMedio * (0.7 + Math.random() * 0.6);
       
-      // Clampar entre 1 minuto (mínimo de segurança anti-spam) e 15 minutos (máximo de espera)
-      const intervaloFinalMinutos = Math.max(1, Math.min(15, intervaloRandom));
+      // Clampar entre 2 minutos (mínimo de segurança anti-spam) e 240 minutos (máximo de espera)
+      const intervaloFinalMinutos = Math.max(2, Math.min(240, intervaloRandom));
       
       proximoEnvioTimestamp = Date.now() + intervaloFinalMinutos * 60 * 1000;
       console.log(`[Agendador] Envio processado. Próximo disparo em ${intervaloFinalMinutos.toFixed(2)} minutos (${new Date(proximoEnvioTimestamp).toLocaleTimeString("pt-BR")}). Restam ${totalLeadsRestantes - (enviadoSucesso ? 1 : 0)} leads hoje.`);
