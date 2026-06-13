@@ -1266,7 +1266,22 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
  */
 async function arquivarConversaAtiva(page) {
   try {
-    const headerMenuSelector = '#main header [data-testid="menu"], #main header [data-testid="conversation-menu-button"], #main header span[data-icon="menu"], #main header span[data-icon="overflow-menu-vertical"]';
+    const headerMenuSelector = [
+      '#main header [data-testid="menu"]',
+      '#main header [data-testid="conversation-menu-button"]',
+      '#main header span[data-icon="menu"]',
+      '#main header span[data-icon="overflow-menu-vertical"]',
+      '#main header button[aria-label*="opções"]',
+      '#main header button[title*="opções"]',
+      '#main header button[aria-label*="options"]',
+      '#main header button[title*="options"]',
+      '#main header [role="button"][aria-label*="opções"]',
+      '#main header [role="button"][title*="opções"]',
+      '#main header [role="button"][aria-label*="options"]',
+      '#main header [role="button"][title*="options"]',
+      '#main header [role="button"]:has(span[data-icon="menu"])',
+      '#main header [role="button"]:has(span[data-icon="overflow-menu-vertical"])'
+    ].join(', ');
     const menuBtn = await page.waitForSelector(headerMenuSelector, { timeout: 8000 }).catch(() => null);
     if (!menuBtn) {
       console.log("[Archive] Não foi possível encontrar o botão de menu no cabeçalho do chat.");
