@@ -2551,9 +2551,14 @@ async function dispararUmLeadParaVendedor(vendedorId) {
 }
 
 let proximoEnvioTimestamp = 0;
+let agendadorExecutando = false;
 
 function iniciarAgendadorRobo() {
   setInterval(async () => {
+    if (agendadorExecutando) {
+      return;
+    }
+    agendadorExecutando = true;
     try {
       const agora = new Date();
       
@@ -2682,6 +2687,8 @@ function iniciarAgendadorRobo() {
     } catch (err) {
       console.error("[Agendador] Erro geral na execução do agendador:", err.message);
       proximoEnvioTimestamp = Date.now() + 30 * 1000;
+    } finally {
+      agendadorExecutando = false;
     }
   }, 10000);
 }
