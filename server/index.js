@@ -616,14 +616,53 @@ app.put("/vendedores/:id", (req, res) => {
 
     db.prepare(`
       UPDATE vendedores 
-      SET nome = ?, email = ?, senha = ?, whatsapp = ?, limite_diario = ?, ativo = ?, fila_timestamp = ?, cpf = ?, link_kiwify = ?, eh_gerente = ?, indicado_por_id = ?, pix = ?, ultimo_acesso = ?
+      SET nome = ?, email = ?, senha = ?, whatsapp = ?, limite_diario = ?, ativo = ?, fila_timestamp = ?, cpf = ?, link_kiwify = ?, eh_gerente = ?, indicado_por_id = ?, pix = ?
       WHERE id = ?
-    `).run(nomeFinal, emailFinal, senhaFinal, whatsappFinal, limiteFinal, ativoFinal, filaTimestampFinal, cpfFinal, linkKiwifyFinal, ehGerenteFinal, indicadoPorIdFinal, pixFinal, now, id);
+    `).run(nomeFinal, emailFinal, senhaFinal, whatsappFinal, limiteFinal, ativoFinal, filaTimestampFinal, cpfFinal, linkKiwifyFinal, ehGerenteFinal, indicadoPorIdFinal, pixFinal, id);
     
     // Process queue after change
     processarFilaVendedores();
 
     res.json({ ok: true, message: "Vendedor updated com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.delete("/vendedores/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const vendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
+    if (!vendedor) {
+      return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
+    }
+    
+    db.transaction(() => {
+      db.prepare("DELETE FROM recuperacao_senha WHERE email = ?").run(vendedor.email);
+      db.prepare("DELETE FROM mensagens_chat WHERE vendedor_id = ?").run(id);
+      db.prepare("DELETE FROM pre_vendas WHERE vendedor_id = ?").run(id);
+      db.prepare(`
+        UPDATE leads 
+        SET vendedor_id = NULL, status = 'disponivel', assigned_to = NULL, assigned_at = NULL 
+        WHERE vendedor_id = ?
+      `).run(id);
+      db.prepare("DELETE FROM vendedores WHERE id = ?").run(id);
+    })();
+    
+    try {
+      const session = sessions.get(id);
+      if (session) {
+        if (session.context) {
+          session.context.close().catch(() => {});
+        }
+        sessions.delete(id);
+      }
+    } catch (e) {
+      console.error("Erro ao fechar sessão do vendedor deletado:", e.message);
+    }
+    
+    res.json({ ok: true, message: "Conta do vendedor excluída com sucesso." });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
@@ -1930,10 +1969,6 @@ app.post("/whatsapp/desconectar/:vendedorId", async (req, res) => {
 app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
   try {
     const { vendedorId } = req.params;
-
-    // Update access
-    const now = nowIso();
-    db.prepare("UPDATE vendedores SET ultimo_acesso = ? WHERE id = ?").run(now, vendedorId);
 
     const session = sessions.get(vendedorId);
     if (!session || session.status !== "connected") {

@@ -788,7 +788,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
                     <td style={{ verticalAlign: "middle" }}>
                       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                         <div>
-                          {v.ultimo_acesso && (Date.now() - new Date(v.ultimo_acesso).getTime() < 5 * 60 * 1000) ? (
+                          {v.ultimo_acesso && (Math.abs(Date.now() - new Date(v.ultimo_acesso).getTime()) < 5 * 60 * 1000) ? (
                             <span className="badge" style={{
                               backgroundColor: "rgba(16, 185, 129, 0.15)",
                               color: "#10b981",
@@ -1361,18 +1361,54 @@ function AdminVendedores() {
     });
   }
 
-  async function alternarAtivo(vendedor) {
+  async function alternarDisparoRobo(vendedor) {
     try {
-      const res = await fetch(`${API_URL}/vendedores/${vendedor.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ativo: vendedor.ativo ? 0 : 1 })
+      setErro("");
+      setSucesso("");
+      const isRobotActive = vendedor.robo_ativo === 1;
+      const url = isRobotActive 
+        ? `${API_URL}/whatsapp/cancelar-disparo/${vendedor.id}` 
+        : `${API_URL}/whatsapp/disparar/${vendedor.id}`;
+      
+      const res = await fetch(url, {
+        method: "POST"
       });
+      const data = await res.json();
       if (res.ok) {
+        setSucesso(data.message || (isRobotActive ? "Robô pausado com sucesso." : "Robô iniciado com sucesso."));
         carregarVendedores();
+      } else {
+        setErro(data.error || "Erro ao alterar estado do robô.");
       }
     } catch (e) {
       console.error(e);
+      setErro("Falha de conexão ao alterar estado do robô.");
+    }
+  }
+
+  async function excluirVendedor(vendedor) {
+    if (!vendedor || !vendedor.id) return;
+    if (!window.confirm(`Tem certeza absoluta que deseja excluir permanentemente a conta do vendedor "${vendedor.nome}"? Esta ação não pode ser desfeita e removerá todo o histórico associado.`)) {
+      return;
+    }
+    try {
+      setErro("");
+      setSucesso("");
+      const res = await fetch(`${API_URL}/vendedores/${vendedor.id}`, {
+        method: "DELETE"
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSucesso("Conta do vendedor excluída com sucesso.");
+        setEditando(null);
+        setForm({ nome: "", email: "", senha: "", whatsapp: "", limite_diario: 25, cpf: "", link_kiwify: "", eh_gerente: 0 });
+        carregarVendedores();
+      } else {
+        setErro(data.error || "Erro ao excluir conta do vendedor.");
+      }
+    } catch (e) {
+      console.error(e);
+      setErro("Falha de conexão com o servidor ao excluir vendedor.");
     }
   }
 
@@ -1430,15 +1466,25 @@ function AdminVendedores() {
               </select>
             </div>
           </div>
-          <div style={{ display: "flex", gap: "10px" }}>
+          <div style={{ display: "flex", gap: "10px", width: "100%" }}>
             <button className="btn btn-primary" type="submit">
               {editando ? "Salvar Alterações" : "Cadastrar Vendedor"}
             </button>
             {editando && (
-              <button className="btn btn-secondary" type="button" onClick={() => {
-                setEditando(null);
-                setForm({ nome: "", email: "", senha: "", whatsapp: "", limite_diario: 25, cpf: "", link_kiwify: "", eh_gerente: 0 });
-              }}>Cancelar Edição</button>
+              <>
+                <button className="btn btn-secondary" type="button" onClick={() => {
+                  setEditando(null);
+                  setForm({ nome: "", email: "", senha: "", whatsapp: "", limite_diario: 25, cpf: "", link_kiwify: "", eh_gerente: 0 });
+                }}>Cancelar Edição</button>
+                <button 
+                  className="btn btn-danger" 
+                  type="button" 
+                  onClick={() => excluirVendedor(editando)}
+                  style={{ marginLeft: "auto" }}
+                >
+                  🗑️ Excluir Conta
+                </button>
+              </>
             )}
           </div>
         </form>
@@ -1508,7 +1554,7 @@ function AdminVendedores() {
                       <td style={{ verticalAlign: "middle" }}>
                         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                           <div>
-                            {v.ultimo_acesso && (Date.now() - new Date(v.ultimo_acesso).getTime() < 5 * 60 * 1000) ? (
+                            {v.ultimo_acesso && (Math.abs(Date.now() - new Date(v.ultimo_acesso).getTime()) < 5 * 60 * 1000) ? (
                               <span className="badge" style={{
                                 backgroundColor: "rgba(16, 185, 129, 0.15)",
                                 color: "#10b981",
@@ -1588,8 +1634,8 @@ function AdminVendedores() {
                           <button className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: "0.85rem" }} onClick={() => iniciarEdicao(v)}>
                             ✏️ Editar
                           </button>
-                          <button className={`btn ${v.ativo ? "btn-danger" : "btn-success"}`} style={{ padding: "6px 12px", fontSize: "0.85rem" }} onClick={() => alternarAtivo(v)}>
-                            {v.ativo ? "🚫 Desativar" : "✅ Ativar"}
+                          <button className={`btn ${v.robo_ativo === 1 ? "btn-danger" : "btn-success"}`} style={{ padding: "6px 12px", fontSize: "0.85rem" }} onClick={() => alternarDisparoRobo(v)}>
+                            {v.robo_ativo === 1 ? "⏸️ Pausar" : "⚡ Disparar"}
                           </button>
                         </div>
                       </td>
