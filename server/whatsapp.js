@@ -1266,6 +1266,27 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
  */
 async function arquivarConversaAtiva(page) {
   try {
+    // 1. Tentar focar a caixa de texto para garantir foco na conversa
+    const textboxSelector = '#main div[contenteditable="true"], div[data-testid="conversation-text-input"], div[data-testid="compose-input"]';
+    const textbox = await page.$(textboxSelector).catch(() => null);
+    if (textbox) {
+      await textbox.focus().catch(() => {});
+    }
+    
+    // 2. Tentar arquivar usando o atalho oficial do WhatsApp Web (Ctrl + Alt + Shift + E)
+    console.log("[Archive] Tentando arquivar conversa via atalho de teclado (Ctrl+Alt+Shift+E)...");
+    await page.keyboard.press("Control+Alt+Shift+E").catch(() => {});
+    await new Promise(r => setTimeout(r, 2000)); // Espera animação
+    
+    // Verificar se o painel do chat sumiu. Se sumiu, deu certo!
+    const aindaVisivel = await page.$('#main').catch(() => null);
+    if (!aindaVisivel) {
+      console.log("[Archive] Conversa arquivada com sucesso via atalho de teclado.");
+      return true;
+    }
+    
+    console.log("[Archive] Atalho não fechou a conversa. Tentando via clique no menu...");
+    // 3. Fallback: Procurar o botão de menu (três pontos) no cabeçalho do chat
     const headerMenuSelector = [
       '#main header [data-testid="menu"]',
       '#main header [data-testid="conversation-menu-button"]',
@@ -1282,13 +1303,14 @@ async function arquivarConversaAtiva(page) {
       '#main header [role="button"]:has(span[data-icon="menu"])',
       '#main header [role="button"]:has(span[data-icon="overflow-menu-vertical"])'
     ].join(', ');
+    
     const menuBtn = await page.waitForSelector(headerMenuSelector, { timeout: 8000 }).catch(() => null);
     if (!menuBtn) {
       console.log("[Archive] Não foi possível encontrar o botão de menu no cabeçalho do chat.");
       return false;
     }
     await menuBtn.click();
-    await new Promise(r => setTimeout(r, 800)); // Espera abrir o menu dropdown
+    await new Promise(r => setTimeout(r, 1000)); // Espera abrir o menu dropdown
     
     // Procura pela opção que contém "arquivar" ou "archive" no menu dropdown
     const items = await page.$$('div[role="button"], [role="menuitem"], span, div');
@@ -1310,7 +1332,7 @@ async function arquivarConversaAtiva(page) {
       return false;
     }
     
-    await new Promise(r => setTimeout(r, 1500)); // Espera animação de arquivamento
+    await new Promise(r => setTimeout(r, 2000)); // Espera animação de arquivamento
     return true;
   } catch (err) {
     console.error("[Archive] Erro ao arquivar conversa ativa:", err.message);
