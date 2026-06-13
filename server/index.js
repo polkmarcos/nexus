@@ -2514,7 +2514,7 @@ async function dispararUmLeadParaVendedor(vendedorId) {
     UPDATE leads 
     SET vendedor_id = ?, status = 'reservado', assigned_to = ?, assigned_at = ?, atualizado_em = ?
     WHERE id = ?
-  `).run(vendedorId, vendedorId, nowIsoStr, nowIsoStr, nowIsoStr, lead.id);
+  `).run(vendedorId, vendedorId, nowIsoStr, nowIsoStr, lead.id);
   
   lead.vendedor_id = vendedorId;
   lead.status = 'reservado';
