@@ -55,6 +55,7 @@ db.exec(`
     site TEXT,
     ultima_mensagem TEXT,
     observacoes TEXT,
+    cliques_link INTEGER DEFAULT 0,
     criado_em TEXT NOT NULL,
     atualizado_em TEXT NOT NULL,
     FOREIGN KEY (vendedor_id) REFERENCES vendedores(id)
@@ -236,6 +237,10 @@ try {
   db.exec("ALTER TABLE mensagens ADD COLUMN vendedor_id TEXT;");
 } catch (_) {}
 
+try {
+  db.exec("ALTER TABLE leads ADD COLUMN cliques_link INTEGER DEFAULT 0;");
+} catch (_) {}
+
 
 
 try {
@@ -316,6 +321,10 @@ try {
   db.prepare(`
     INSERT OR IGNORE INTO configuracoes (chave, valor)
     VALUES ('link_venda_padrao', '')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('url_sistema', 'http://localhost:3001')
   `).run();
   db.prepare(`
     INSERT OR IGNORE INTO configuracoes (chave, valor)

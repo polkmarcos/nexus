@@ -510,6 +510,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
     faturamentoTotal: 0,
     lucroTotal: 0,
     preVendasPendentes: 0,
+    totalCliques: 0,
   });
 
   const [estoqueLeads, setEstoqueLeads] = useState(0);
@@ -577,6 +578,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
           faturamentoTotal: dataPreVendas.preVendas.filter(p => p.status === "Aprovada").length * preVal,
           lucroTotal: dataPreVendas.preVendas.filter(p => p.status === "Aprovada").length * (preVal - comVal),
           preVendasPendentes: dataPreVendas.preVendas.filter(p => p.status === "Pendente").length,
+          totalCliques: leads.reduce((sum, l) => sum + (l.cliques_link || 0), 0),
         };
         
         setEstatisticas(stats);
@@ -712,6 +714,11 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
           <span className="stat-label">Mensagens Enviadas</span>
           <span className="stat-value">{estatisticas.enviada}</span>
           <span className="stat-desc">Primeiro contato automático disparado</span>
+        </div>
+        <div className="stat-card info" style={{ borderLeft: "4px solid var(--info)" }}>
+          <span className="stat-label">Cliques no Link</span>
+          <span className="stat-value">{estatisticas.totalCliques || 0} 🖱️</span>
+          <span className="stat-desc">Total de cliques nos links enviados</span>
         </div>
         <div className="stat-card success">
           <span className="stat-label">Pré-vendas Feitas</span>
@@ -2628,6 +2635,7 @@ function AdminLeads() {
                 <th>Nicho</th>
                 <th>Cidade/UF</th>
                 <th>Status</th>
+                <th>Cliques</th>
                 <th>Vendedor Responsável</th>
                 <th>Última Mensagem</th>
                 <th>Origem</th>
@@ -2637,7 +2645,7 @@ function AdminLeads() {
             <tbody>
               {leadsFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan="9" style={{ textAlign: "center" }}>Nenhum lead encontrado com os filtros atuais.</td>
+                  <td colSpan="10" style={{ textAlign: "center" }}>Nenhum lead encontrado com os filtros atuais.</td>
                 </tr>
               ) : (
                 leadsFiltrados.map(l => (
@@ -2654,6 +2662,11 @@ function AdminLeads() {
                     <td>
                       <span className={`badge badge-${l.status.toLowerCase().replace(/[^a-z]/g, "")}`}>
                         {l.status}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="badge" style={{ background: l.cliques_link > 0 ? "var(--success)" : "rgba(255,255,255,0.05)", color: l.cliques_link > 0 ? "black" : "var(--text-secondary)" }}>
+                        {l.cliques_link || 0} 🖱️
                       </span>
                     </td>
                     <td>{l.vendedor_nome ? <strong>👤 {l.vendedor_nome}</strong> : <span style={{ color: "var(--text-tertiary)" }}>Não atribuído</span>}</td>
@@ -4170,6 +4183,14 @@ function VendedorDashboard({ usuarioLogado, setUsuarioLogado }) {
             Total de leads vinculados a você
           </span>
         </div>
+
+        <div className="stat-card info" style={{ borderLeft: "4px solid var(--success)" }}>
+          <span className="stat-label" style={{ color: "var(--success)" }}>Cliques no Link</span>
+          <span className="stat-number" style={{ color: "var(--success)" }}>{stats.total_cliques || 0} 🖱️</span>
+          <span className="stat-desc" style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "4px" }}>
+            Cliques nos links de vendas enviados por você
+          </span>
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: "24px", marginTop: "24px" }} className="dashboard-flex-responsive">
@@ -5290,6 +5311,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
                 <th>Nicho</th>
                 <th>Cidade</th>
                 <th>Status</th>
+                <th>Cliques</th>
                 <th>Última Mensagem</th>
                 <th>Ações</th>
               </tr>
@@ -5297,7 +5319,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
             <tbody>
               {leadsFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan="7" style={{ textAlign: "center", padding: "30px", color: "var(--text-secondary)" }}>
+                  <td colSpan="8" style={{ textAlign: "center", padding: "30px", color: "var(--text-secondary)" }}>
                     {isSending ? "Disparando mensagens automáticas... os leads aparecerão nesta lista conforme forem prospectados." : "Nenhum lead nesta lista."}
                   </td>
                 </tr>
@@ -5318,6 +5340,11 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
                     <td>
                       <span className={`badge badge-${l.status.toLowerCase().replace(/[^a-z]/g, "")}`}>
                         {l.status}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="badge" style={{ background: l.cliques_link > 0 ? "var(--success)" : "rgba(255,255,255,0.05)", color: l.cliques_link > 0 ? "black" : "var(--text-secondary)" }}>
+                        {l.cliques_link || 0} 🖱️
                       </span>
                     </td>
                     <td>

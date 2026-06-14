@@ -30,9 +30,71 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.static(path.join(__dirname, "../dist")));
 
+let lastUrlLogged = "";
 app.use((req, res, next) => {
   console.log(`[HTTP] ${req.method} ${req.url}`);
+  
+  // Dynamically update the url_sistema configuration based on request headers
+  const host = req.get('host');
+  if (host) {
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const currentUrl = `${protocol}://${host}`;
+    if (currentUrl !== lastUrlLogged) {
+      lastUrlLogged = currentUrl;
+      try {
+        db.prepare("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('url_sistema', ?)").run(currentUrl);
+      } catch (err) {
+        // ignore
+      }
+    }
+  }
   next();
+});
+
+// LINK TRACKING REDIRECT
+app.get("/c/:leadId", (req, res) => {
+  try {
+    const { leadId } = req.params;
+    
+    // Find lead
+    const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(leadId);
+    if (!lead) {
+      return res.status(404).send("Lead não encontrado.");
+    }
+    
+    // Increment click count
+    db.prepare("UPDATE leads SET cliques_link = COALESCE(cliques_link, 0) + 1, atualizado_em = ? WHERE id = ?")
+      .run(new Date().toISOString(), leadId);
+      
+    // Determine sales link
+    let linkKiwify = "";
+    if (lead.vendedor_id) {
+      const vendedor = db.prepare("SELECT link_kiwify FROM vendedores WHERE id = ?").get(lead.vendedor_id);
+      if (vendedor && vendedor.link_kiwify) {
+        linkKiwify = vendedor.link_kiwify;
+      }
+    }
+    
+    if (!linkKiwify) {
+      const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
+      if (globalConfig) {
+        linkKiwify = globalConfig.valor;
+      }
+    }
+    
+    // Fallback if no link is configured anywhere
+    if (!linkKiwify) {
+      linkKiwify = "https://kiwify.com.br/";
+    }
+    
+    console.log(`[Rastreamento] Lead ${lead.empresa} (${leadId}) clicou no link. Redirecionando para: ${linkKiwify}`);
+    
+    // Redirect browser
+    res.redirect(302, linkKiwify);
+  } catch (error) {
+    console.error("Erro no redirecionamento do link:", error);
+    res.status(500).send("Erro interno ao processar o link.");
+  }
 });
 
 function nowIso() {
@@ -822,6 +884,9 @@ app.get("/vendedores/:id/dashboard-stats", (req, res) => {
       `).all(id);
     }
 
+    const totalCliquesRow = db.prepare("SELECT SUM(COALESCE(cliques_link, 0)) as total FROM leads WHERE vendedor_id = ?").get(id);
+    const totalCliques = totalCliquesRow?.total || 0;
+
     res.json({
       ok: true,
       stats: {
@@ -844,7 +909,8 @@ app.get("/vendedores/:id/dashboard-stats", (req, res) => {
         indicados_count: indicadosCount,
         indicados_sales_count: indicadosSalesCount,
         comissao_gerente_acumulada: comissaoGerenteAcumulada,
-        indicados_list: indicadosList
+        indicados_list: indicadosList,
+        total_cliques: totalCliques
       }
     });
   } catch (error) {
@@ -2096,11 +2162,15 @@ app.post("/whatsapp/disparar-lead", async (req, res) => {
     }
 
     // Format message
+    const publicUrl = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'url_sistema'").get()?.valor || "http://localhost:3001";
+    const linkRastreando = `${publicUrl}/c/${leadId}`;
+
     const saudacao = getSaudacao();
     const textoPersonalizado = templateTexto
       .replace(/{saudacao}/gi, saudacao)
       .replace(/{empresa}/gi, lead.company_name || lead.empresa || "")
       .replace(/{nicho}/gi, lead.nicho || "")
+      .replace(/{link_kiwify}/gi, linkRastreando)
       .replace(/{site_demo}/gi, "");
 
     // Send via WhatsApp session using enviarMensagemAvulsa

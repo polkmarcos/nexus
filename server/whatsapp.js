@@ -793,23 +793,14 @@ function obterMensagemSecundaria(lead, vendedorId) {
 
   // Substituir variáveis
   const saudacao = getSaudacao();
-  let linkKiwify = "";
-  const vendedor = db.prepare("SELECT link_kiwify FROM vendedores WHERE id = ?").get(vendedorId);
-  if (vendedor && vendedor.link_kiwify) {
-    linkKiwify = vendedor.link_kiwify;
-  }
-  if (!linkKiwify) {
-    const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
-    if (globalConfig) {
-      linkKiwify = globalConfig.valor;
-    }
-  }
+  const publicUrl = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'url_sistema'").get()?.valor || "http://localhost:3001";
+  const linkRastreando = `${publicUrl}/c/${lead.id}`;
 
   texto = texto
     .replace(/{saudacao}/gi, saudacao)
     .replace(/{empresa}/gi, lead.company_name || lead.empresa || "")
     .replace(/{nicho}/gi, lead.nicho || "")
-    .replace(/{link_kiwify}/gi, linkKiwify || "");
+    .replace(/{link_kiwify}/gi, linkRastreando);
 
   return texto;
 }
@@ -965,18 +956,10 @@ export async function monitorarRespostaLead(vendedorId, lead, sentAt, msgsConfig
 
             // Replace placeholders ({link_kiwify}, {empresa}) in auto-replies
             if (textoResposta) {
-              let linkKiwify = "";
-              const vendedor = db.prepare("SELECT link_kiwify FROM vendedores WHERE id = ?").get(vendedorId);
-              if (vendedor && vendedor.link_kiwify) {
-                linkKiwify = vendedor.link_kiwify;
-              }
-              if (!linkKiwify) {
-                const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
-                if (globalConfig) {
-                  linkKiwify = globalConfig.valor;
-                }
-              }
-              textoResposta = textoResposta.replace(/{link_kiwify}/g, linkKiwify || "");
+              const publicUrl = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'url_sistema'").get()?.valor || "http://localhost:3001";
+              const linkRastreando = `${publicUrl}/c/${lead.id}`;
+              
+              textoResposta = textoResposta.replace(/{link_kiwify}/g, linkRastreando);
               textoResposta = textoResposta.replace(/{empresa}/g, lead.empresa || "");
             }
           }
