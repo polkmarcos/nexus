@@ -776,7 +776,7 @@ async function enviarRespostaAutomatica(vendedorId, lead, texto) {
  * Recupera uma mensagem secundária ativa aleatória adaptada para o lead.
  */
 function obterMensagemSecundaria(lead, vendedorId) {
-  const msgsAtivas = db.prepare("SELECT * FROM mensagens WHERE ativa = 1 AND tipo = 'secundaria'").all();
+  const msgsAtivas = db.prepare("SELECT * FROM mensagens WHERE ativa = 1 AND tipo = 'secundaria' AND (vendedor_id = ? OR vendedor_id IS NULL)").all(vendedorId);
   if (msgsAtivas.length === 0) return null;
 
   const temSite = !!(lead.site && lead.site.trim() !== "" && lead.site !== "Não Informado" && lead.site !== "Não Informada");
@@ -855,7 +855,7 @@ export async function monitorarRespostaLead(vendedorId, lead, sentAt, msgsConfig
     }
 
     // 1. Check if there are active secondary messages
-    const temMensagensSecundarias = db.prepare("SELECT 1 FROM mensagens WHERE ativa = 1 AND tipo = 'secundaria'").get();
+    const temMensagensSecundarias = db.prepare("SELECT 1 FROM mensagens WHERE ativa = 1 AND tipo = 'secundaria' AND (vendedor_id = ? OR vendedor_id IS NULL)").get(vendedorId);
 
     // 2. Timeout check: if secondary messages are active and 5 minutes passed, send it and terminate
     if (temMensagensSecundarias && (Date.now() - startedAt >= 5 * 60 * 1000)) {
@@ -1050,11 +1050,19 @@ export async function dispararMensagens(vendedorId, mensagemTexto, leads) {
     const page = session.page;
     const resultados = [];
 
-    // Load auto-reply configs for bot vs human responses
-    const msgRoboRow    = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'mensagem_resposta_robo'").get();
-    const msgHumanoRow  = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'mensagem_resposta_humano'").get();
-    const msgRobo   = msgRoboRow   ? msgRoboRow.valor   : '';
-    const msgHumano = msgHumanoRow ? msgHumanoRow.valor : '';
+    // Load auto-reply configs for bot vs human responses (seller custom or global fallback)
+    const vendedorRow = db.prepare("SELECT mensagem_resposta_robo, mensagem_resposta_humano FROM vendedores WHERE id = ?").get(vendedorId);
+    let msgRobo = vendedorRow?.mensagem_resposta_robo || '';
+    let msgHumano = vendedorRow?.mensagem_resposta_humano || '';
+
+    if (!msgRobo) {
+      const msgRoboRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'mensagem_resposta_robo'").get();
+      msgRobo = msgRoboRow ? msgRoboRow.valor : '';
+    }
+    if (!msgHumano) {
+      const msgHumanoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'mensagem_resposta_humano'").get();
+      msgHumano = msgHumanoRow ? msgHumanoRow.valor : '';
+    }
     
     // Ensure we have an array of template texts
     const msgTemplates = Array.isArray(mensagemTexto) ? mensagemTexto : [mensagemTexto];

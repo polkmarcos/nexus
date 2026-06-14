@@ -210,6 +210,9 @@ export default function App() {
             {pagina === "vendedor-whatsapp" && (
               <VendedorWhatsapp usuarioLogado={usuarioLogado} />
             )}
+            {pagina === "vendedor-mensagens" && (
+              <VendedorMensagens usuarioLogado={usuarioLogado} />
+            )}
           </>
         )}
       </main>
@@ -454,6 +457,13 @@ function Sidebar({ pagina, setPagina, usuarioLogado, sair, adminToken, sairAdmin
               >
                 <span className="sidebar-icon">💬</span>
                 <span className="sidebar-text">Conectar WhatsApp</span>
+              </button>
+              <button
+                className={pagina === "vendedor-mensagens" ? "ativo" : ""}
+                onClick={() => setPagina("vendedor-mensagens")}
+              >
+                <span className="sidebar-icon">✉️</span>
+                <span className="sidebar-text">Minhas Mensagens</span>
               </button>
             </>
           )}
@@ -4655,6 +4665,100 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
 
 
 
+  // Lote/batch dispatch states
+  const [loteStatus, setLoteStatus] = useState("idle"); // 'idle', 'sending', 'paused', 'completed'
+  const [loteIndex, setLoteIndex] = useState(0);
+  const [loteIntervalo, setLoteIntervalo] = useState(30); // in seconds
+  const [tempoRestante, setTempoRestante] = useState(0);
+  const [loteLog, setLoteLog] = useState("");
+  const [modeloSelecionado, setModeloSelecionado] = useState("aleatorio");
+  const [modelosPrimarios, setModelosPrimarios] = useState([]);
+  const [loadingDisparo, setLoadingDisparo] = useState({});
+
+  async function carregarModelosPrimarios() {
+    try {
+      const res = await fetch(`${API_URL}/mensagens?vendedorId=${usuarioLogado.id}&tipo=primaria`);
+      const data = await res.json();
+      if (data.ok) {
+        setModelosPrimarios((data.mensagens || []).filter(m => m.ativa === 1));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function devolverLeads() {
+    if (!window.confirm("Deseja realmente devolver todos os leads não enviados (Reservados) de volta ao banco de leads?")) return;
+    setErro("");
+    setSucesso("");
+    try {
+      const res = await fetch(`${API_URL}/vendedores/${usuarioLogado.id}/devolver-leads`, {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setSucesso(data.message);
+        carregarLeads();
+        carregarStats();
+      } else {
+        setErro(data.error || "Erro ao devolver leads.");
+      }
+    } catch (e) {
+      setErro("Erro de rede ao devolver leads.");
+    }
+  }
+
+  async function dispararLeadIndividual(leadId) {
+    setLoadingDisparo(prev => ({ ...prev, [leadId]: true }));
+    setErro("");
+    setSucesso("");
+    try {
+      const res = await fetch(`${API_URL}/whatsapp/disparar-lead`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vendedorId: usuarioLogado.id,
+          leadId,
+          mensagemId: modeloSelecionado
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setSucesso("Mensagem enviada com sucesso!");
+        carregarLeads();
+        carregarStats();
+      } else {
+        setErro(data.error || "Erro ao disparar.");
+      }
+    } catch (e) {
+      setErro("Falha ao se conectar com o servidor.");
+    } finally {
+      setLoadingDisparo(prev => ({ ...prev, [leadId]: false }));
+    }
+  }
+
+  function iniciarLote() {
+    if (whatsappStatus !== "connected") {
+      setErro("WhatsApp precisa estar conectado para iniciar os disparos.");
+      return;
+    }
+    setLoteIndex(0);
+    setTempoRestante(0);
+    setLoteStatus("sending");
+    setLoteLog("Iniciando disparos em lote...");
+  }
+
+  function pausarLote() {
+    setLoteStatus("paused");
+    setLoteLog("Disparos em lote pausados pelo usuário.");
+  }
+
+  function retomarLote() {
+    setTempoRestante(0);
+    setLoteStatus("sending");
+    setLoteLog("Retomando disparos em lote...");
+  }
+
   // Dispatch sending state
   const [isSending, setIsSending] = useState(false);
   const [showTestNotice, setShowTestNotice] = useState(false);
@@ -4705,6 +4809,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
     carregarLeads();
     carregarStats();
     checarStatusWhatsapp();
+    carregarModelosPrimarios();
     
     // Auto-connect WhatsApp session on dashboard mount (restoring saved cookies or preparing QR/Phone pairing)
     fetch(`${API_URL}/whatsapp/conectar/${usuarioLogado.id}`, {
@@ -4720,6 +4825,67 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Lote dispatch runner loop
+  useEffect(() => {
+    let timer;
+    if (loteStatus === "sending") {
+      const leadsPendentes = leads.filter(l => l.status === "reservado");
+      
+      if (leadsPendentes.length === 0) {
+        setLoteStatus("completed");
+        setLoteLog("Todos os leads da lista receberam mensagens!");
+        return;
+      }
+
+      if (loteIndex >= leadsPendentes.length) {
+        setLoteStatus("completed");
+        setLoteLog("Disparo em lote finalizado!");
+        return;
+      }
+
+      if (tempoRestante <= 0) {
+        const leadAtual = leadsPendentes[loteIndex];
+        
+        const executarDisparo = async () => {
+          setLoteLog(`Disparando para ${leadAtual.empresa}...`);
+          try {
+            const res = await fetch(`${API_URL}/whatsapp/disparar-lead`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                vendedorId: usuarioLogado.id,
+                leadId: leadAtual.id,
+                mensagemId: modeloSelecionado
+              })
+            });
+            const data = await res.json();
+            if (res.ok && data.ok) {
+              setLoteLog(`Mensagem enviada com sucesso para ${leadAtual.empresa}!`);
+              carregarLeads();
+              carregarStats();
+              setLoteIndex(prev => prev + 1);
+              setTempoRestante(loteIntervalo);
+            } else {
+              setLoteLog(`Erro ao disparar para ${leadAtual.empresa}: ${data.error || 'Erro desconhecido'}`);
+              setLoteIndex(prev => prev + 1);
+              setTempoRestante(loteIntervalo);
+            }
+          } catch (err) {
+            setLoteLog(`Erro de rede ao disparar para ${leadAtual.empresa}.`);
+            setLoteStatus("paused");
+          }
+        };
+
+        executarDisparo();
+      } else {
+        timer = setTimeout(() => {
+          setTempoRestante(prev => prev - 1);
+        }, 1000);
+      }
+    }
+    return () => clearTimeout(timer);
+  }, [loteStatus, loteIndex, tempoRestante, leads, loteIntervalo, modeloSelecionado]);
 
   async function dispararMensagensAutomaticas() {
     setErro("");
@@ -4841,8 +5007,8 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
   const totalEnviados = leads.filter(l => l.status === "Mensagem enviada" || l.status === "Pré-venda feita" || l.status === "Comprou").length;
   const temVendasIniciadas = leads.length > 0;
 
-  // Filter out unmessaged leads from visible list
-  const leadsVisiveis = leads.filter(l => l.status !== "reservado");
+  // Show all leads (pending ones are in 'reservado')
+  const leadsVisiveis = leads;
   const leadsFiltrados = statusFiltro ? leadsVisiveis.filter(l => l.status === statusFiltro) : leadsVisiveis;
   const statusUnicos = [...new Set(leadsVisiveis.map(l => l.status))];
   const leadsEnviados = leadsVisiveis
@@ -4904,7 +5070,7 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
         </div>
       )}
 
-      <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", flexWrap: "wrap" }}>
+      <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", flexWrap: "wrap", marginBottom: "20px" }}>
         <div style={{ display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap" }}>
           <div className="form-group" style={{ minWidth: "180px", margin: 0 }}>
             <label style={{ fontSize: "0.8rem", marginBottom: "4px", display: "block" }}>Filtrar Status</label>
@@ -4930,38 +5096,146 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: "15px", alignItems: "center", flexWrap: "wrap" }}>
-          {isSending ? (
-            <button 
-              className="btn btn-danger pulse" 
-              onClick={cancelarDisparo}
-              style={{ display: "flex", alignItems: "center", gap: "6px", background: "#f44336", borderColor: "#f44336", height: "42px" }}
-            >
-              ⏹️ Parar Robô
-            </button>
-          ) : (
-            <button className="btn btn-primary" onClick={dispararMensagensAutomaticas} disabled={whatsappStatus !== "connected"}>
-              🚀 Iniciar Vendas
-            </button>
-          )}
+        <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>
+            Conexão WhatsApp: <strong style={{ color: whatsappStatus === "connected" ? "var(--success)" : "var(--danger)" }}>
+              {whatsappStatus === "connected" ? "🟢 Conectado" : "🔴 Desconectado"}
+            </strong>
+          </span>
+
+          <button 
+            className="btn btn-primary" 
+            onClick={coletarLeads} 
+            disabled={loteStatus === "sending"}
+          >
+            📥 Capturar 25 Leads
+          </button>
+          
+          <button 
+            className="btn btn-secondary" 
+            onClick={devolverLeads} 
+            disabled={loteStatus === "sending" || leads.filter(l => l.status === "reservado").length === 0}
+          >
+            🔄 Devolver Leads
+          </button>
         </div>
       </div>
 
+      {leads.filter(l => l.status === "reservado").length > 0 && (
+        <div className="card" style={{ 
+          marginBottom: "24px", 
+          borderLeft: loteStatus === "sending" ? "4px solid #f59e0b" : "4px solid var(--border-color)",
+          background: "linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%)",
+          borderRadius: "16px",
+          boxShadow: "0 10px 30px rgba(0, 0, 0, 0.2)",
+          padding: "24px"
+        }}>
+          <h3 style={{ margin: "0 0 16px 0", display: "flex", alignItems: "center", gap: "8px", color: "white" }}>
+            ⚡ Painel de Disparo em Lote
+            {loteStatus === "sending" && <span className="badge badge-warning pulse" style={{ background: "#f59e0b", color: "black", borderRadius: "4px" }}>Enviando...</span>}
+          </h3>
+
+          <div style={{ display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap", marginBottom: "20px" }}>
+            <div className="form-group" style={{ margin: 0, minWidth: "150px" }}>
+              <label style={{ fontSize: "0.8rem", color: "#94a3b8", marginBottom: "4px", display: "block" }}>Intervalo entre envios</label>
+              <select 
+                value={loteIntervalo} 
+                onChange={e => setLoteIntervalo(Number(e.target.value))}
+                disabled={loteStatus === "sending"}
+                style={{ margin: 0, background: "#1e293b", color: "white", border: "1px solid #475569" }}
+              >
+                <option value={10}>10 segundos (teste)</option>
+                <option value={15}>15 segundos (teste rápido)</option>
+                <option value={30}>30 segundos</option>
+                <option value={60}>1 minuto</option>
+                <option value={120}>2 minutos</option>
+                <option value={300}>5 minutos</option>
+              </select>
+            </div>
+
+            <div className="form-group" style={{ margin: 0, minWidth: "220px", flex: 1 }}>
+              <label style={{ fontSize: "0.8rem", color: "#94a3b8", marginBottom: "4px", display: "block" }}>Modelo de Mensagem Primária</label>
+              <select 
+                value={modeloSelecionado} 
+                onChange={e => setModeloSelecionado(e.target.value)}
+                disabled={loteStatus === "sending"}
+                style={{ margin: 0, background: "#1e293b", color: "white", border: "1px solid #475569" }}
+              >
+                <option value="aleatorio">Aleatório (Mensagens ativas)</option>
+                {modelosPrimarios.map(m => (
+                  <option key={m.id} value={m.id}>{m.nome}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+              {loteStatus === "sending" ? (
+                <button className="btn btn-danger" onClick={pausarLote} style={{ height: "42px", display: "flex", alignItems: "center", gap: "6px" }}>
+                  ⏸️ Pausar Lote
+                </button>
+              ) : loteStatus === "paused" ? (
+                <button className="btn btn-success" onClick={retomarLote} style={{ height: "42px", display: "flex", alignItems: "center", gap: "6px", background: "#10b981", borderColor: "#10b981" }}>
+                  ▶️ Retomar Lote
+                </button>
+              ) : (
+                <button className="btn btn-primary" onClick={iniciarLote} disabled={whatsappStatus !== "connected"} style={{ height: "42px", display: "flex", alignItems: "center", gap: "6px" }}>
+                  🚀 Iniciar Lote
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Lote Progress Info */}
+          {loteStatus !== "idle" && (
+            <div style={{ background: "rgba(0,0,0,0.3)", padding: "16px", borderRadius: "8px", border: "1px solid #334155" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.9rem", color: "#cbd5e1", marginBottom: "8px" }}>
+                <span>
+                  Progresso: <strong>{loteIndex}</strong> de <strong>{leads.filter(l => l.status === "reservado").length + loteIndex}</strong> leads
+                </span>
+                {loteStatus === "sending" && (
+                  <span style={{ color: "#f59e0b" }}>
+                    Próximo envio em: <strong>{tempoRestante}s</strong>
+                  </span>
+                )}
+              </div>
+              <div style={{ 
+                width: "100%", 
+                height: "6px", 
+                background: "#1e293b", 
+                borderRadius: "3px", 
+                overflow: "hidden",
+                marginBottom: "12px"
+              }}>
+                <div style={{ 
+                  height: "100%", 
+                  background: "#f59e0b", 
+                  width: `${((loteIndex) / (leads.filter(l => l.status === "reservado").length + loteIndex)) * 100}%`,
+                  transition: "width 0.4s ease"
+                }} />
+              </div>
+              <div style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "#38bdf8" }}>
+                📢 Status: {loteLog}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Registro de Envios Recentes */}
-      <div className="card" style={{ marginBottom: "20px", borderLeft: isSending ? "4px solid var(--success)" : "4px solid var(--border-color)" }}>
+      <div className="card" style={{ marginBottom: "20px", borderLeft: loteStatus === "sending" ? "4px solid #f59e0b" : "4px solid var(--border-color)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
           <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
             📤 Registro de Envios Recentes
-            {isSending && <span className="badge badge-success pulse" style={{ padding: "4px 8px", fontSize: "0.75rem", borderRadius: "4px" }}>🟢 Robô Ativo</span>}
+            {loteStatus === "sending" && <span className="badge badge-warning pulse" style={{ padding: "4px 8px", fontSize: "0.75rem", borderRadius: "4px", background: "#f59e0b", color: "black" }}>⚡ Disparando</span>}
           </h3>
           <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-            {isSending ? "Robô ativo e monitorando..." : "Robô pausado"}
+            {loteStatus === "sending" ? "Disparador em lote ativo..." : "Disparador em lote inativo"}
           </span>
         </div>
         
         {leadsEnviados.length === 0 ? (
           <p style={{ color: "var(--text-tertiary)", fontSize: "0.9rem", margin: "10px 0 0 0" }}>
-            {isSending ? "🤖 O robô está ativo em segundo plano no servidor 24h. Ele distribuirá os envios ao longo do dia para evitar padrões suspeitos." : "Nenhuma mensagem enviada hoje. Ative o robô acima para iniciar."}
+            {loteStatus === "sending" ? "🤖 O disparador em lote está ativo. Aguarde o envio das mensagens." : "Nenhuma mensagem enviada hoje. Use o painel de lote ou envie individualmente."}
           </p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>
@@ -5069,15 +5343,22 @@ function VendedorLeads({ usuarioLogado, setUsuarioLogado }) {
                           <option value="Respondeu mas vai comprar depois">Comprar depois</option>
                         </select>
                         
+                        {l.status === "reservado" && (
+                          <button 
+                            className="btn btn-warning" 
+                            style={{ padding: "6px 12px", fontSize: "0.85rem", background: "#f59e0b", color: "#000", border: "1px solid #f59e0b", fontWeight: "600" }} 
+                            onClick={() => dispararLeadIndividual(l.id)}
+                            disabled={loadingDisparo[l.id] || whatsappStatus !== "connected"}
+                          >
+                            {loadingDisparo[l.id] ? "⏳ Enviando..." : "⚡ Disparar"}
+                          </button>
+                        )}
+
                         {l.status !== "Pré-venda feita" && l.status !== "Comprou" && (
                           <button className="btn btn-success" style={{ padding: "6px 12px", fontSize: "0.85rem" }} onClick={() => setModalLead(l)}>
                             💰 Pré-Venda
                           </button>
                         )}
-
-
-
-
                       </div>
                     </td>
                   </tr>
@@ -5479,6 +5760,395 @@ function VendedorWhatsapp({ usuarioLogado }) {
           </details>
         </div>
       </div>
+    </section>
+  );
+}
+
+// 10. SELLER CUSTOM MESSAGES MANAGEMENT
+function VendedorMensagens({ usuarioLogado }) {
+  const [abaAtiva, setAbaAtiva] = useState("prospeccao"); // 'prospeccao', 'secundaria', 'auto-reply'
+  const [mensagens, setMensagens] = useState([]);
+  const [form, setForm] = useState({ nome: "", texto: "", condicao_site: "qualquer" });
+  const [editingId, setEditingId] = useState(null);
+  const [erro, setErro] = useState("");
+  const [sucesso, setSucesso] = useState("");
+
+  // Auto-reply state
+  const [msgRobo, setMsgRobo] = useState("");
+  const [msgHumano, setMsgHumano] = useState("");
+  const [autoReplySucesso, setAutoReplySucesso] = useState("");
+  const [autoReplyErro, setAutoReplyErro] = useState("");
+
+  async function carregarDados() {
+    setErro("");
+    setSucesso("");
+    setAutoReplyErro("");
+    setAutoReplySucesso("");
+    try {
+      if (abaAtiva === "auto-reply") {
+        const res = await fetch(`${API_URL}/vendedores/fila/${usuarioLogado.id}`);
+        const data = await res.json();
+        if (data.ok && data.vendedor) {
+          setMsgRobo(data.vendedor.mensagem_resposta_robo || "");
+          setMsgHumano(data.vendedor.mensagem_resposta_humano || "");
+        }
+        return;
+      }
+
+      const tipo = abaAtiva === "prospeccao" ? "primaria" : "secundaria";
+      const res = await fetch(`${API_URL}/mensagens?vendedorId=${usuarioLogado.id}&tipo=${tipo}`);
+      const data = await res.json();
+      if (data.ok) {
+        setMensagens(data.mensagens || []);
+      }
+    } catch (e) {
+      console.error(e);
+      setErro("Erro de comunicação com o servidor.");
+    }
+  }
+
+  useEffect(() => {
+    carregarDados();
+  }, [abaAtiva]);
+
+  async function salvarAutoReply(e) {
+    e.preventDefault();
+    setAutoReplyErro("");
+    setAutoReplySucesso("");
+    try {
+      const res = await fetch(`${API_URL}/vendedores/${usuarioLogado.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mensagem_resposta_robo: msgRobo, mensagem_resposta_humano: msgHumano })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAutoReplySucesso("Mensagens de resposta automática salvas com sucesso!");
+        const saved = JSON.parse(localStorage.getItem("usuarioLogado") || "{}");
+        saved.mensagem_resposta_robo = msgRobo;
+        saved.mensagem_resposta_humano = msgHumano;
+        localStorage.setItem("usuarioLogado", JSON.stringify(saved));
+      } else {
+        setAutoReplyErro(data.error || "Erro ao salvar.");
+      }
+    } catch (e) {
+      setAutoReplyErro("Erro de comunicação com o servidor.");
+    }
+  }
+
+  async function salvarMensagem(e) {
+    e.preventDefault();
+    setErro("");
+    setSucesso("");
+    
+    if (!form.nome || !form.texto) {
+      setErro("Nome e Texto do modelo são obrigatórios.");
+      return;
+    }
+
+    const payload = {
+      ...form,
+      tipo: abaAtiva === "prospeccao" ? "primaria" : "secundaria",
+      vendedor_id: usuarioLogado.id
+    };
+
+    try {
+      let res;
+      if (editingId) {
+        res = await fetch(`${API_URL}/mensagens/${editingId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        res = await fetch(`${API_URL}/mensagens`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setSucesso(editingId ? "Modelo atualizado com sucesso!" : "Modelo criado com sucesso!");
+        setForm({ nome: "", texto: "", condicao_site: "qualquer" });
+        setEditingId(null);
+        carregarDados();
+      } else {
+        setErro(data.error || "Erro ao salvar o modelo.");
+      }
+    } catch (e) {
+      setErro("Erro de comunicação com o servidor.");
+    }
+  }
+
+  function iniciarEdicao(m) {
+    setEditingId(m.id);
+    setForm({
+      nome: m.nome,
+      texto: m.texto,
+      condicao_site: m.condicao_site || "qualquer"
+    });
+  }
+
+  async function deletarMensagem(id) {
+    if (!window.confirm("Deseja realmente excluir este modelo de mensagem?")) return;
+    setErro("");
+    setSucesso("");
+    try {
+      const res = await fetch(`${API_URL}/mensagens/${id}`, {
+        method: "DELETE"
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setSucesso("Modelo excluído com sucesso!");
+        carregarDados();
+      } else {
+        setErro(data.error || "Erro ao excluir.");
+      }
+    } catch (e) {
+      setErro("Erro de comunicação com o servidor.");
+    }
+  }
+
+  async function alternarStatusMensagem(id) {
+    try {
+      const res = await fetch(`${API_URL}/mensagens/${id}/ativar`, {
+        method: "PUT"
+      });
+      if (res.ok) {
+        carregarDados();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  return (
+    <section>
+      <h1>Modelos de Mensagem Customizados</h1>
+      <p className="subtitle">Crie e gerencie suas mensagens de abordagem, acompanhamento e respostas automáticas para o robô.</p>
+
+      <div className="tab-container" style={{ marginBottom: "24px" }}>
+        <button 
+          className={`tab-btn ${abaAtiva === "prospeccao" ? "active" : ""}`} 
+          onClick={() => setAbaAtiva("prospeccao")}
+        >
+          Abordagem Primária (Prospecção)
+        </button>
+        <button 
+          className={`tab-btn ${abaAtiva === "secundaria" ? "active" : ""}`} 
+          onClick={() => setAbaAtiva("secundaria")}
+        >
+          Acompanhamento Secundário (5 Minutos)
+        </button>
+        <button 
+          className={`tab-btn ${abaAtiva === "auto-reply" ? "active" : ""}`} 
+          onClick={() => setAbaAtiva("auto-reply")}
+        >
+          Auto-Respostas (Robô vs Humano)
+        </button>
+      </div>
+
+      {erro && <div className="alert alert-error">{erro}</div>}
+      {sucesso && <div className="alert alert-success">{sucesso}</div>}
+
+      {abaAtiva !== "auto-reply" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
+          <div className="card" style={{ margin: 0 }}>
+            <h3>{editingId ? "📝 Editar Modelo" : "✨ Criar Novo Modelo"}</h3>
+            <form onSubmit={salvarMensagem} style={{ marginTop: "16px" }}>
+              <div className="form-group">
+                <label>Nome identificador (ex: Abordagem Pizza)</label>
+                <input 
+                  type="text" 
+                  value={form.nome} 
+                  onChange={e => setForm({ ...form, nome: e.target.value })} 
+                  placeholder="Nome identificador"
+                  required
+                />
+              </div>
+
+              {abaAtiva === "secundaria" && (
+                <div className="form-group">
+                  <label>Condição de Site</label>
+                  <select 
+                    value={form.condicao_site} 
+                    onChange={e => setForm({ ...form, condicao_site: e.target.value })}
+                  >
+                    <option value="qualquer">Sempre enviar (Independe se tem site ou não)</option>
+                    <option value="com_site">Enviar apenas se o Lead POSSUI website cadastrado</option>
+                    <option value="sem_site">Enviar apenas se o Lead NÃO possui website cadastrado</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="form-group">
+                <label>Texto da Mensagem</label>
+                <textarea 
+                  value={form.texto} 
+                  onChange={e => setForm({ ...form, texto: e.target.value })} 
+                  rows="8" 
+                  placeholder="Texto da mensagem..."
+                  required
+                />
+                <small style={{ color: "var(--text-tertiary)", marginTop: "6px", display: "block" }}>
+                  Variáveis permitidas: <strong>{"{saudacao}"}</strong> (Bom dia / Boa tarde / Boa noite), <strong>{"{empresa}"}</strong> (Nome do estabelecimento) e <strong>{"{nicho}"}</strong> (ex: pizzaria).
+                </small>
+              </div>
+
+              <div style={{ display: "flex", gap: "10px", marginTop: "15px" }}>
+                <button type="submit" className="btn btn-primary">
+                  {editingId ? "Salvar Alterações" : "Salvar Modelo"}
+                </button>
+                {editingId && (
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary" 
+                    onClick={() => {
+                      setEditingId(null);
+                      setForm({ nome: "", texto: "", condicao_site: "qualquer" });
+                    }}
+                  >
+                    Cancelar Edição
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+
+          <div className="card" style={{ margin: 0 }}>
+            <h3>Lista de Modelos ({mensagens.length})</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginTop: "16px" }}>
+              {mensagens.length === 0 ? (
+                <p style={{ color: "var(--text-secondary)", textAlign: "center", padding: "20px" }}>
+                  Nenhum modelo customizado cadastrado. O sistema usará as mensagens globais do admin como padrão.
+                </p>
+              ) : (
+                mensagens.map(m => (
+                  <div 
+                    key={m.id} 
+                    style={{ 
+                      padding: "16px", 
+                      background: "var(--bg-secondary)", 
+                      borderRadius: "10px", 
+                      border: "1px solid var(--border-color)",
+                      position: "relative"
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                      <strong style={{ fontSize: "1.05rem" }}>{m.nome}</strong>
+                      <span style={{ fontSize: "0.8rem", color: "var(--text-tertiary)" }}>
+                        {m.vendedor_id ? "👤 Customizado" : "🌐 Padrão Geral"}
+                      </span>
+                    </div>
+
+                    {abaAtiva === "secundaria" && (
+                      <div style={{ fontSize: "0.8rem", color: "var(--primary)", marginBottom: "8px" }}>
+                        Condição: {m.condicao_site === "com_site" ? "Apenas com site" : m.condicao_site === "sem_site" ? "Apenas sem site" : "Qualquer"}
+                      </div>
+                    )}
+
+                    <p style={{ 
+                      fontSize: "0.9rem", 
+                      whiteSpace: "pre-wrap", 
+                      background: "rgba(0,0,0,0.1)", 
+                      padding: "12px", 
+                      borderRadius: "6px",
+                      margin: "0 0 16px 0",
+                      maxHeight: "150px",
+                      overflowY: "auto",
+                      color: "var(--text-secondary)"
+                    }}>
+                      {m.texto}
+                    </p>
+
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        {m.vendedor_id && (
+                          <button 
+                            className={`btn ${m.ativa ? "btn-success" : "btn-secondary"}`} 
+                            style={{ padding: "6px 12px", fontSize: "0.8rem" }}
+                            onClick={() => alternarStatusMensagem(m.id)}
+                          >
+                            {m.ativa ? "🟢 Ativa" : "🔴 Inativa"}
+                          </button>
+                        )}
+                        {!m.vendedor_id && (
+                          <span className="badge badge-success" style={{ background: "var(--primary)", color: "white" }}>Ativo Geral</span>
+                        )}
+                      </div>
+                      
+                      {m.vendedor_id && (
+                        <div style={{ display: "flex", gap: "8px" }}>
+                          <button 
+                            className="btn btn-secondary" 
+                            style={{ padding: "6px 12px", fontSize: "0.8rem" }}
+                            onClick={() => iniciarEdicao(m)}
+                          >
+                            ✏️ Editar
+                          </button>
+                          <button 
+                            className="btn btn-danger" 
+                            style={{ padding: "6px 12px", fontSize: "0.8rem", background: "#f44336" }}
+                            onClick={() => deletarMensagem(m.id)}
+                          >
+                            🗑️ Excluir
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="card" style={{ maxWidth: "800px", margin: "0 auto" }}>
+          <h3>Auto-Respostas (Robô vs Humano)</h3>
+          <p className="subtitle" style={{ marginBottom: "20px" }}>
+            Configure as respostas automáticas disparadas pelo monitor quando o cliente responder. O robô classifica se a resposta veio de um robô automático do cliente ou de um humano de verdade.
+          </p>
+
+          {autoReplyErro && <div className="alert alert-error">{autoReplyErro}</div>}
+          {autoReplySucesso && <div className="alert alert-success">{autoReplySucesso}</div>}
+
+          <form onSubmit={salvarAutoReply}>
+            <div className="form-group" style={{ marginBottom: "20px" }}>
+              <label style={{ fontWeight: "600", display: "block", marginBottom: "6px" }}>🤖 Resposta quando detectado ROBÔ do cliente</label>
+              <textarea 
+                value={msgRobo} 
+                onChange={e => setMsgRobo(e.target.value)} 
+                rows="5" 
+                placeholder="Ex: Obrigado pelo retorno! Percebi que vocês têm um atendimento automático..."
+                required
+              />
+              <small style={{ color: "var(--text-tertiary)" }}>
+                Enviada imediatamente quando detectado que a resposta do lead é uma auto-resposta de bot de atendimento.
+              </small>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: "24px" }}>
+              <label style={{ fontWeight: "600", display: "block", marginBottom: "6px" }}>👤 Resposta quando detectado HUMANO (Responsável)</label>
+              <textarea 
+                value={msgHumano} 
+                onChange={e => setMsgHumano(e.target.value)} 
+                rows="5" 
+                placeholder="Ex: Olá! Que ótimo que você viu nossa mensagem! 😊 Tenho uma proposta especial..."
+                required
+              />
+              <small style={{ color: "var(--text-tertiary)" }}>
+                Enviada quando a resposta do lead parece ser de um humano. Permite usar a variável <strong>{"{link_kiwify}"}</strong> (Seu link de afiliado) e <strong>{"{empresa}"}</strong>.
+              </small>
+            </div>
+
+            <button type="submit" className="btn btn-primary" style={{ width: "100%", padding: "12px" }}>
+              💾 Salvar Respostas Automáticas
+            </button>
+          </form>
+        </div>
+      )}
     </section>
   );
 }

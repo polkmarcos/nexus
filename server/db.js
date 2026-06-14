@@ -33,6 +33,8 @@ db.exec(`
     link_kiwify TEXT,
     indicado_por_id TEXT,
     eh_gerente INTEGER DEFAULT 0,
+    mensagem_resposta_robo TEXT,
+    mensagem_resposta_humano TEXT,
     criado_em TEXT NOT NULL
   );
   
@@ -65,6 +67,7 @@ db.exec(`
     ativa INTEGER DEFAULT 1,
     condicao_site TEXT DEFAULT 'qualquer',
     tipo TEXT DEFAULT 'primaria',
+    vendedor_id TEXT,
     criado_em TEXT NOT NULL
   );
 
@@ -206,6 +209,14 @@ try {
 } catch (_) {}
 
 try {
+  db.exec("ALTER TABLE vendedores ADD COLUMN mensagem_resposta_robo TEXT;");
+} catch (_) {}
+
+try {
+  db.exec("ALTER TABLE vendedores ADD COLUMN mensagem_resposta_humano TEXT;");
+} catch (_) {}
+
+try {
   db.exec("ALTER TABLE leads ADD COLUMN assigned_to TEXT;");
 } catch (_) {}
 
@@ -219,6 +230,10 @@ try {
 
 try {
   db.exec("ALTER TABLE mensagens ADD COLUMN tipo TEXT DEFAULT 'primaria';");
+} catch (_) {}
+
+try {
+  db.exec("ALTER TABLE mensagens ADD COLUMN vendedor_id TEXT;");
 } catch (_) {}
 
 

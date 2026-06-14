@@ -13,7 +13,9 @@ import {
   checkSessionStatus, 
   sessions,
   enviarMensagemAvulsa,
-  sincronizarChatLead
+  sincronizarChatLead,
+  monitorarRespostaLead,
+  getSaudacao
 } from "./whatsapp.js";
 
 
@@ -455,6 +457,9 @@ app.post("/vendedores", (req, res) => {
     const countAtivos = db.prepare("SELECT COUNT(*) as count FROM vendedores WHERE ativo = 1").get().count;
     const ativo = countAtivos < maxActive ? 1 : 0;
 
+    const configRobo = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'mensagem_resposta_robo'").get()?.valor || "";
+    const configHumano = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'mensagem_resposta_humano'").get()?.valor || "";
+
     const vendedor = {
       id: randomUUID(),
       nome: nome.toUpperCase().trim(),
@@ -469,14 +474,16 @@ app.post("/vendedores", (req, res) => {
       link_kiwify,
       indicado_por_id: indicado_por_id || null,
       eh_gerente: Number(eh_gerente) || 0,
+      mensagem_resposta_robo: configRobo,
+      mensagem_resposta_humano: configHumano,
       criado_em: now,
     };
 
     db.prepare(`
       INSERT INTO vendedores (
-        id, nome, email, senha, whatsapp, limite_diario, ativo, ultimo_acesso, fila_timestamp, cpf, link_kiwify, indicado_por_id, eh_gerente, criado_em
+        id, nome, email, senha, whatsapp, limite_diario, ativo, ultimo_acesso, fila_timestamp, cpf, link_kiwify, indicado_por_id, eh_gerente, mensagem_resposta_robo, mensagem_resposta_humano, criado_em
       ) VALUES (
-        @id, @nome, @email, @senha, @whatsapp, @limite_diario, @ativo, @ultimo_acesso, @fila_timestamp, @cpf, @link_kiwify, @indicado_por_id, @eh_gerente, @criado_em
+        @id, @nome, @email, @senha, @whatsapp, @limite_diario, @ativo, @ultimo_acesso, @fila_timestamp, @cpf, @link_kiwify, @indicado_por_id, @eh_gerente, @mensagem_resposta_robo, @mensagem_resposta_humano, @criado_em
       )
     `).run(vendedor);
 
@@ -577,7 +584,11 @@ app.get("/vendedores/fila/:id", (req, res) => {
 app.put("/vendedores/:id", (req, res) => {
   try {
     const { id } = req.params;
-    const { nome, email, senha, whatsapp, limite_diario, ativo, cpf, link_kiwify, eh_gerente, indicado_por_id, pix } = req.body;
+    const { 
+      nome, email, senha, whatsapp, limite_diario, ativo, cpf, link_kiwify, 
+      eh_gerente, indicado_por_id, pix,
+      mensagem_resposta_robo, mensagem_resposta_humano 
+    } = req.body;
     
     const vendedorExistente = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
     if (!vendedorExistente) {
@@ -595,6 +606,8 @@ app.put("/vendedores/:id", (req, res) => {
     const ehGerenteFinal = eh_gerente !== undefined ? Number(eh_gerente) : (vendedorExistente.eh_gerente || 0);
     const indicadoPorIdFinal = indicado_por_id !== undefined ? indicado_por_id : (vendedorExistente.indicado_por_id || null);
     const pixFinal = pix !== undefined ? pix : (vendedorExistente.pix || null);
+    const roboFinal = mensagem_resposta_robo !== undefined ? mensagem_resposta_robo : vendedorExistente.mensagem_resposta_robo;
+    const humanoFinal = mensagem_resposta_humano !== undefined ? mensagem_resposta_humano : vendedorExistente.mensagem_resposta_humano;
     
     if (senha !== undefined && senha.length < 6) {
       return res.status(400).json({ ok: false, error: "A senha de acesso deve ter no mínimo 6 caracteres." });
@@ -616,14 +629,29 @@ app.put("/vendedores/:id", (req, res) => {
 
     db.prepare(`
       UPDATE vendedores 
-      SET nome = ?, email = ?, senha = ?, whatsapp = ?, limite_diario = ?, ativo = ?, fila_timestamp = ?, cpf = ?, link_kiwify = ?, eh_gerente = ?, indicado_por_id = ?, pix = ?
+      SET nome = ?, email = ?, senha = ?, whatsapp = ?, limite_diario = ?, ativo = ?, fila_timestamp = ?, cpf = ?, link_kiwify = ?, eh_gerente = ?, indicado_por_id = ?, pix = ?, mensagem_resposta_robo = ?, mensagem_resposta_humano = ?
       WHERE id = ?
-    `).run(nomeFinal, emailFinal, senhaFinal, whatsappFinal, limiteFinal, ativoFinal, filaTimestampFinal, cpfFinal, linkKiwifyFinal, ehGerenteFinal, indicadoPorIdFinal, pixFinal, id);
+    `).run(nomeFinal, emailFinal, senhaFinal, whatsappFinal, limiteFinal, ativoFinal, filaTimestampFinal, cpfFinal, linkKiwifyFinal, ehGerenteFinal, indicadoPorIdFinal, pixFinal, roboFinal, humanoFinal, id);
     
     // Process queue after change
     processarFilaVendedores();
 
     res.json({ ok: true, message: "Vendedor updated com sucesso." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/vendedores/:id/devolver-leads", (req, res) => {
+  try {
+    const { id } = req.params;
+    const now = nowIso();
+    const result = db.prepare(`
+      UPDATE leads
+      SET status = 'disponivel', vendedor_id = NULL, assigned_to = NULL, assigned_at = NULL, atualizado_em = ?
+      WHERE vendedor_id = ? AND status = 'reservado'
+    `).run(now, id);
+    res.json({ ok: true, message: `${result.changes} leads devolvidos ao lago com sucesso.` });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
@@ -1771,22 +1799,23 @@ app.post("/distribuir-leads", (req, res) => {
 // MENSAGENS (TEMPLATES)
 app.post("/mensagens", (req, res) => {
   try {
-    const { nome, texto, ativa = 1, condicao_site = 'qualquer', tipo = 'primaria' } = req.body;
+    const { nome, texto, ativa = 1, condicao_site = 'qualquer', tipo = 'primaria', vendedor_id, vendedorId } = req.body;
     if (!nome || !texto) {
       return res.status(400).json({ ok: false, error: "Nome e Texto são obrigatórios." });
     }
 
     const id = randomUUID();
     const now = nowIso();
+    const finalVendedorId = vendedor_id || vendedorId || null;
 
     db.prepare(`
-      INSERT INTO mensagens (id, nome, texto, ativa, condicao_site, tipo, criado_em)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, nome, texto, ativa, condicao_site, tipo, now);
+      INSERT INTO mensagens (id, nome, texto, ativa, condicao_site, tipo, vendedor_id, criado_em)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, nome, texto, ativa, condicao_site, tipo, finalVendedorId, now);
 
     res.json({
       ok: true,
-      mensagem: { id, nome, texto, ativa, condicao_site, tipo, criado_em: now }
+      mensagem: { id, nome, texto, ativa, condicao_site, tipo, vendedor_id: finalVendedorId, criado_em: now }
     });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
@@ -1795,12 +1824,21 @@ app.post("/mensagens", (req, res) => {
 
 app.get("/mensagens", (req, res) => {
   try {
-    const { tipo } = req.query;
+    const { tipo, vendedorId, vendedor_id } = req.query;
+    const vId = vendedorId || vendedor_id;
     let mensagens;
-    if (tipo) {
-      mensagens = db.prepare("SELECT * FROM mensagens WHERE tipo = ? ORDER BY criado_em DESC").all(tipo);
+    if (vId) {
+      if (tipo) {
+        mensagens = db.prepare("SELECT * FROM mensagens WHERE tipo = ? AND (vendedor_id = ? OR vendedor_id IS NULL) ORDER BY criado_em DESC").all(tipo, vId);
+      } else {
+        mensagens = db.prepare("SELECT * FROM mensagens WHERE (vendedor_id = ? OR vendedor_id IS NULL) ORDER BY criado_em DESC").all(vId);
+      }
     } else {
-      mensagens = db.prepare("SELECT * FROM mensagens ORDER BY criado_em DESC").all();
+      if (tipo) {
+        mensagens = db.prepare("SELECT * FROM mensagens WHERE tipo = ? ORDER BY criado_em DESC").all(tipo);
+      } else {
+        mensagens = db.prepare("SELECT * FROM mensagens ORDER BY criado_em DESC").all();
+      }
     }
     res.json({ ok: true, mensagens });
   } catch (error) {
@@ -2001,6 +2039,108 @@ app.post("/whatsapp/disparar/:vendedorId", async (req, res) => {
       ok: true,
       message: "Robô ativado com sucesso! As mensagens serão distribuídas ao longo do dia no horário permitido."
     });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/whatsapp/disparar-lead", async (req, res) => {
+  try {
+    const { vendedorId, leadId, mensagemId } = req.body;
+    if (!vendedorId || !leadId) {
+      return res.status(400).json({ ok: false, error: "Vendedor ID e Lead ID são obrigatórios." });
+    }
+
+    const session = sessions.get(vendedorId);
+    if (!session || session.status !== "connected") {
+      return res.status(400).json({ ok: false, error: "WhatsApp não está conectado para este vendedor. Conecte primeiro." });
+    }
+
+    // Check seller status
+    const vendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(vendedorId);
+    if (!vendedor) {
+      return res.status(404).json({ ok: false, error: "Vendedor não encontrado." });
+    }
+    if (vendedor.ativo === 0 && (vendedor.eh_gerente || 0) === 0) {
+      return res.status(400).json({ ok: false, error: "Sua conta está inativa na fila de espera. Conecte seu WhatsApp para ser ativado." });
+    }
+
+    if (vendedor.suspensao_ate && new Date(vendedor.suspensao_ate) > new Date()) {
+      return res.status(400).json({ ok: false, error: "Sua conta está suspensa temporariamente para aquecimento do chip novo por 14 dias." });
+    }
+
+    // Get lead
+    const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(leadId);
+    if (!lead) {
+      return res.status(404).json({ ok: false, error: "Lead não encontrado." });
+    }
+
+    // Determine message text
+    let templateTexto = "";
+    if (mensagemId && mensagemId !== "aleatorio") {
+      const msgRow = db.prepare("SELECT texto FROM mensagens WHERE id = ?").get(mensagemId);
+      if (msgRow) {
+        templateTexto = msgRow.texto;
+      }
+    }
+
+    // If no template specified, choose a random active primary template for this seller (or global)
+    if (!templateTexto) {
+      const msgs = db.prepare("SELECT texto FROM mensagens WHERE ativa = 1 AND tipo = 'primaria' AND (vendedor_id = ? OR vendedor_id IS NULL)").all(vendedorId);
+      if (msgs.length === 0) {
+        // Absolute fallback default message
+        templateTexto = "Olá {saudacao} {empresa}, tudo bem? Notei que vocês não têm um site próprio para o nicho de {nicho}. Gostaria de ver uma demonstração gratuita de como ficaria?";
+      } else {
+        templateTexto = msgs[Math.floor(Math.random() * msgs.length)].texto;
+      }
+    }
+
+    // Format message
+    const saudacao = getSaudacao();
+    const textoPersonalizado = templateTexto
+      .replace(/{saudacao}/gi, saudacao)
+      .replace(/{empresa}/gi, lead.company_name || lead.empresa || "")
+      .replace(/{nicho}/gi, lead.nicho || "")
+      .replace(/{site_demo}/gi, "");
+
+    // Send via WhatsApp session using enviarMensagemAvulsa
+    const sentAt = Date.now();
+    await enviarMensagemAvulsa(vendedorId, lead.telefone, textoPersonalizado);
+
+    // Update lead status to 'Mensagem enviada'
+    const now = nowIso();
+    db.prepare(`
+      UPDATE leads
+      SET status = 'Mensagem enviada', ultima_mensagem = ?, atualizado_em = ?
+      WHERE id = ?
+    `).run(textoPersonalizado, now, leadId);
+
+    // Save outbound message to chat history
+    const idMsgOut = 'wa_' + Math.random().toString(36).substring(2, 11);
+    db.prepare(`
+      INSERT INTO mensagens_chat (id, lead_id, vendedor_id, direcao, texto, timestamp)
+      VALUES (?, ?, ?, 'out', ?, ?)
+    `).run(idMsgOut, leadId, vendedorId, textoPersonalizado, now);
+
+    // Load auto-reply configs for bot vs human responses (seller custom or global fallback)
+    let msgRobo = vendedor.mensagem_resposta_robo || '';
+    let msgHumano = vendedor.mensagem_resposta_humano || '';
+
+    if (!msgRobo) {
+      const msgRoboRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'mensagem_resposta_robo'").get();
+      msgRobo = msgRoboRow ? msgRoboRow.valor : '';
+    }
+    if (!msgHumano) {
+      const msgHumanoRow = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'mensagem_resposta_humano'").get();
+      msgHumano = msgHumanoRow ? msgHumanoRow.valor : '';
+    }
+
+    // Start background monitor for this lead's reply (bot vs human detection)
+    monitorarRespostaLead(vendedorId, lead, sentAt, { msgRobo, msgHumano }).catch(err => {
+      console.error(`[Monitor] Erro no monitor de ${lead.empresa}:`, err.message);
+    });
+
+    res.json({ ok: true, message: `Mensagem enviada com sucesso para ${lead.empresa}.` });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
@@ -2743,9 +2883,6 @@ function iniciarAgendadorRobo() {
       // Pequeno delay entre tentativas de conexão para não sobrecarregar recursos
       await new Promise(r => setTimeout(r, 2000));
     }
-    
-    // Iniciar o agendador de disparos
-    iniciarAgendadorRobo();
   } catch (startupErr) {
     console.error("[Inicialização] Erro ao restaurar conexões do robô:", startupErr.message);
   }
