@@ -56,41 +56,81 @@ app.get("/c/:leadId", (req, res) => {
   try {
     const { leadId } = req.params;
     
-    // Find lead
+    // 1. Try to find in leads
     const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(leadId);
-    if (!lead) {
-      return res.status(404).send("Lead não encontrado.");
-    }
-    
-    // Increment click count
-    db.prepare("UPDATE leads SET cliques_link = COALESCE(cliques_link, 0) + 1, atualizado_em = ? WHERE id = ?")
-      .run(new Date().toISOString(), leadId);
+    if (lead) {
+      // Increment lead click count
+      db.prepare("UPDATE leads SET cliques_link = COALESCE(cliques_link, 0) + 1, atualizado_em = ? WHERE id = ?")
+        .run(new Date().toISOString(), leadId);
+        
+      // Determine sales link
+      let linkKiwify = "";
+      if (lead.vendedor_id) {
+        const vendedor = db.prepare("SELECT link_kiwify FROM vendedores WHERE id = ?").get(lead.vendedor_id);
+        if (vendedor && vendedor.link_kiwify) {
+          linkKiwify = vendedor.link_kiwify;
+        }
+      }
       
-    // Determine sales link
+      if (!linkKiwify) {
+        const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
+        if (globalConfig) {
+          linkKiwify = globalConfig.valor;
+        }
+      }
+      
+      if (!linkKiwify) {
+        linkKiwify = "https://kiwify.com.br/";
+      }
+      
+      console.log(`[Rastreamento] Lead ${lead.empresa} (${leadId}) clicou no link. Redirecionando para: ${linkKiwify}`);
+      return res.redirect(302, linkKiwify);
+    }
+    
+    // 2. Try to find in vendedores
+    const vendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(leadId);
+    if (vendedor) {
+      // Increment seller click count
+      db.prepare("UPDATE vendedores SET cliques_link = COALESCE(cliques_link, 0) + 1 WHERE id = ?")
+        .run(leadId);
+        
+      let linkKiwify = vendedor.link_kiwify;
+      if (!linkKiwify) {
+        const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
+        if (globalConfig) {
+          linkKiwify = globalConfig.valor;
+        }
+      }
+      
+      if (!linkKiwify) {
+        linkKiwify = "https://kiwify.com.br/";
+      }
+      
+      console.log(`[Rastreamento] Vendedor ${vendedor.nome} (${leadId}) ou seu link geral recebeu clique. Redirecionando para: ${linkKiwify}`);
+      return res.redirect(302, linkKiwify);
+    }
+    
+    // 3. Fallback: general visitor or invalid ID
+    // Increment global clicks counter
+    const globalClicks = db.prepare("SELECT valor FROM configuracoes WHERE chave = 'cliques_globais'").get();
+    if (!globalClicks) {
+      db.prepare("INSERT INTO configuracoes (chave, valor) VALUES ('cliques_globais', '1')").run();
+    } else {
+      const newVal = parseInt(globalClicks.valor || "0", 10) + 1;
+      db.prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'cliques_globais'").run(String(newVal));
+    }
+    
     let linkKiwify = "";
-    if (lead.vendedor_id) {
-      const vendedor = db.prepare("SELECT link_kiwify FROM vendedores WHERE id = ?").get(lead.vendedor_id);
-      if (vendedor && vendedor.link_kiwify) {
-        linkKiwify = vendedor.link_kiwify;
-      }
+    const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
+    if (globalConfig) {
+      linkKiwify = globalConfig.valor;
     }
-    
-    if (!linkKiwify) {
-      const globalConfig = db.prepare("SELECT valor FROM configuracoes WHERE chave = ?").get("link_venda_padrao");
-      if (globalConfig) {
-        linkKiwify = globalConfig.valor;
-      }
-    }
-    
-    // Fallback if no link is configured anywhere
     if (!linkKiwify) {
       linkKiwify = "https://kiwify.com.br/";
     }
     
-    console.log(`[Rastreamento] Lead ${lead.empresa} (${leadId}) clicou no link. Redirecionando para: ${linkKiwify}`);
-    
-    // Redirect browser
-    res.redirect(302, linkKiwify);
+    console.log(`[Rastreamento] Clique geral/inválido com ID '${leadId}'. Incrementando cliques_globais. Redirecionando para: ${linkKiwify}`);
+    return res.redirect(302, linkKiwify);
   } catch (error) {
     console.error("Erro no redirecionamento do link:", error);
     res.status(500).send("Erro interno ao processar o link.");
@@ -885,7 +925,10 @@ app.get("/vendedores/:id/dashboard-stats", (req, res) => {
     }
 
     const totalCliquesRow = db.prepare("SELECT SUM(COALESCE(cliques_link, 0)) as total FROM leads WHERE vendedor_id = ?").get(id);
-    const totalCliques = totalCliquesRow?.total || 0;
+    const leadCliques = totalCliquesRow?.total || 0;
+    const vendedorCliquesRow = db.prepare("SELECT COALESCE(cliques_link, 0) as total FROM vendedores WHERE id = ?").get(id);
+    const vendedorCliques = vendedorCliquesRow?.total || 0;
+    const totalCliques = leadCliques + vendedorCliques;
 
     res.json({
       ok: true,

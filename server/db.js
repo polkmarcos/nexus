@@ -35,6 +35,7 @@ db.exec(`
     eh_gerente INTEGER DEFAULT 0,
     mensagem_resposta_robo TEXT,
     mensagem_resposta_humano TEXT,
+    cliques_link INTEGER DEFAULT 0,
     criado_em TEXT NOT NULL
   );
   
@@ -241,6 +242,10 @@ try {
   db.exec("ALTER TABLE leads ADD COLUMN cliques_link INTEGER DEFAULT 0;");
 } catch (_) {}
 
+try {
+  db.exec("ALTER TABLE vendedores ADD COLUMN cliques_link INTEGER DEFAULT 0;");
+} catch (_) {}
+
 
 
 try {
@@ -325,6 +330,10 @@ try {
   db.prepare(`
     INSERT OR IGNORE INTO configuracoes (chave, valor)
     VALUES ('url_sistema', 'http://localhost:3001')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO configuracoes (chave, valor)
+    VALUES ('cliques_globais', '0')
   `).run();
   db.prepare(`
     INSERT OR IGNORE INTO configuracoes (chave, valor)

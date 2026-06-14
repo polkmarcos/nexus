@@ -563,6 +563,9 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
         const leads = dataLeads.leads;
         const comVal = dataConfig.comissao_venda ? Number(dataConfig.comissao_venda) : 150;
         const preVal = dataConfig.preco_produto ? Number(dataConfig.preco_produto) : 200;
+        const cliquesGlobais = dataConfig.cliques_globais ? Number(dataConfig.cliques_globais) : 0;
+        const cliquesVendedores = dataVendedores.vendedores.reduce((sum, v) => sum + (v.cliques_link || 0), 0);
+        const cliquesLeads = leads.reduce((sum, l) => sum + (l.cliques_link || 0), 0);
 
         let stats = {
           total: leads.length,
@@ -578,7 +581,7 @@ function AdminDashboard({ setPagina, setAdminMensagensAba }) {
           faturamentoTotal: dataPreVendas.preVendas.filter(p => p.status === "Aprovada").length * preVal,
           lucroTotal: dataPreVendas.preVendas.filter(p => p.status === "Aprovada").length * (preVal - comVal),
           preVendasPendentes: dataPreVendas.preVendas.filter(p => p.status === "Pendente").length,
-          totalCliques: leads.reduce((sum, l) => sum + (l.cliques_link || 0), 0),
+          totalCliques: cliquesLeads + cliquesVendedores + cliquesGlobais,
         };
         
         setEstatisticas(stats);
