@@ -815,14 +815,11 @@ app.get("/vendedores/:id/dashboard-stats", (req, res) => {
     todayStart.setHours(0, 0, 0, 0);
     const todayStartIso = todayStart.toISOString();
 
-    // 1. Leads assigned today (or currently active in 'reservado')
+    // 1. Leads still pending (only 'reservado' counts against daily limit)
     const leadsHoje = db.prepare(`
       SELECT COUNT(*) as total FROM leads 
-      WHERE vendedor_id = ? AND (
-        status = 'reservado' 
-        OR (status != 'disponivel' AND status != 'Vácuo' AND atualizado_em >= ?)
-      )
-    `).get(id, todayStartIso).total;
+      WHERE vendedor_id = ? AND status = 'reservado'
+    `).get(id).total;
 
     // 2. Capacity remaining today
     let limite = 25;
@@ -2354,14 +2351,12 @@ app.post("/vendedores/:id/coletar-leads", (req, res) => {
     todayStart.setHours(0, 0, 0, 0);
     const todayStartIso = todayStart.toISOString();
 
-    // Check how many leads were already assigned to him today
+    // Check how many leads are still pending (not yet worked on) today
+    // Only 'reservado' leads count against the daily limit — processed leads (Mensagem enviada, Pré-venda feita, etc.) do NOT block new collection
     const count = db.prepare(`
       SELECT COUNT(*) as total FROM leads 
-      WHERE vendedor_id = ? AND (
-        status = 'reservado' 
-        OR (status != 'disponivel' AND status != 'Vácuo' AND atualizado_em >= ?)
-      )
-    `).get(id, todayStartIso).total;
+      WHERE vendedor_id = ? AND status = 'reservado'
+    `).get(id).total;
 
     let limite = 25;
     if (vendedor.suspensao_ate && new Date(vendedor.suspensao_ate) > new Date()) {
