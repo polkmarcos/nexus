@@ -142,6 +142,30 @@ function nowIso() {
 }
 
 /**
+ * Devolve automaticamente leads que ficaram em status 'reservado' de dias anteriores.
+ */
+function autoDevolverLeadsAntigos() {
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartIso = todayStart.toISOString();
+    const now = new Date().toISOString();
+    
+    const result = db.prepare(`
+      UPDATE leads 
+      SET status = 'disponivel', vendedor_id = NULL, assigned_to = NULL, assigned_at = NULL, atualizado_em = ?
+      WHERE status = 'reservado' AND assigned_at < ?
+    `).run(now, todayStartIso);
+    
+    if (result.changes > 0) {
+      console.log(`[AutoLimpeza] Devolvidos ${result.changes} leads não trabalhados de dias anteriores para o lago comum.`);
+    }
+  } catch (error) {
+    console.error("Erro na auto-devolução de leads antigos:", error);
+  }
+}
+
+/**
  * Envia mensagem inicial para um único lead usando a sessão WhatsApp do vendedor.
  * Após o envio, atualiza o status do lead para 'Mensagem enviada'.
  */
@@ -801,6 +825,9 @@ app.delete("/vendedores/:id", (req, res) => {
 app.get("/vendedores/:id/dashboard-stats", (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Auto-clean old leftover leads from previous days first
+    autoDevolverLeadsAntigos();
 
     const vendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
     if (!vendedor) {
@@ -1670,6 +1697,7 @@ app.post("/capturar-cancelar/:id", (req, res) => {
 // LEADS
 app.get("/leads", (req, res) => {
   try {
+    autoDevolverLeadsAntigos();
     const leads = db.prepare(`
       SELECT l.*, v.nome as vendedor_nome 
       FROM leads l
@@ -2337,6 +2365,9 @@ app.put("/pre-vendas/:id", (req, res) => {
 app.post("/vendedores/:id/coletar-leads", (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Auto-clean old leftover leads from previous days first
+    autoDevolverLeadsAntigos();
     
     // Check if seller exists and is active
     const vendedor = db.prepare("SELECT * FROM vendedores WHERE id = ?").get(id);
